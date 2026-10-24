@@ -24,3 +24,20 @@ Run tests with:
 ```powershell
 .\.venv\Scripts\python.exe -m pytest -q
 ```
+
+Batch 2A optimizes the public core locally. Run the three real-data examples with:
+
+```powershell
+.\.venv\Scripts\python.exe -m scripts.demo_optimizer
+```
+
+The entry point is `backend.app.optimization.optimize_housing(preferences, areas=None)`. It returns a JSON-serializable result; with `areas=None`, it reads only `data/public/housing_transit_core.csv`. See [the Batch 2A report](docs/BATCH_2A_REPORT.md) for validation, ranking rules, and demonstration results.
+
+Batch 2B provides a local FastAPI server over the public core. From the repository root:
+
+```powershell
+.\.venv\Scripts\python.exe -m pip install -r backend/requirements.txt
+.\.venv\Scripts\python.exe -m uvicorn backend.app.main:app --host 127.0.0.1 --port 8000 --reload
+```
+
+Open `http://127.0.0.1:8000/docs` for the API explorer or `http://127.0.0.1:8000/api/health` for the data health check. CORS permits `http://localhost:5173` by default; set `NESTWISE_CORS_ORIGINS` to a comma-separated list of explicit origins to change it. Run all tests with `.\.venv\Scripts\python.exe -m pytest -q`. See [the Batch 2B report](docs/BATCH_2B_REPORT.md) for endpoints, examples, performance, and limits.
