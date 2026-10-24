@@ -1,0 +1,144 @@
+station_id,station_name,latitude,longitude,rail_routes,source_attribution
+40010,Austin (Blue),41.870851,-87.776812,Blue Line,Chicago Transit Authority GTFS
+40020,Harlem/Lake,41.886848,-87.803176,Green Line,Chicago Transit Authority GTFS
+40030,Pulaski (Green),41.885412,-87.725404,Green Line,Chicago Transit Authority GTFS
+40040,Quincy,41.878723,-87.63374,Brown Line|Orange Line|Pink Line|Purple Line,Chicago Transit Authority GTFS
+40050,Davis,42.04771,-87.683543,Purple Line,Chicago Transit Authority GTFS
+40060,Belmont (Blue),41.9391107041,-87.71225212,Blue Line,Chicago Transit Authority GTFS
+40070,Jackson (Blue),41.878183,-87.629296,Blue Line,Chicago Transit Authority GTFS
+40080,Sheridan,41.9539048386,-87.6546614127,Red Line,Chicago Transit Authority GTFS
+40090,Damen (Brown),41.966286,-87.678639,Brown Line,Chicago Transit Authority GTFS
+40100,Morse,42.008362,-87.665909,Red Line,Chicago Transit Authority GTFS
+40120,35th/Archer,41.829353,-87.680622,Orange Line,Chicago Transit Authority GTFS
+40130,51st,41.80209,-87.618487,Green Line,Chicago Transit Authority GTFS
+40140,Dempster-Skokie,42.038951,-87.751919,Yellow Line,Chicago Transit Authority GTFS
+40150,Pulaski (Pink),41.853732,-87.724311,Pink Line,Chicago Transit Authority GTFS
+40160,LaSalle/Van Buren,41.8768,-87.631739,Brown Line|Orange Line|Pink Line|Purple Line,Chicago Transit Authority GTFS
+40170,Ashland (Green/Pink),41.885269,-87.666969,Green Line|Pink Line,Chicago Transit Authority GTFS
+40180,Oak Park (Blue),41.872108,-87.791602,Blue Line,Chicago Transit Authority GTFS
+40190,Sox-35th,41.831191,-87.630636,Red Line,Chicago Transit Authority GTFS
+40210,Damen (Pink),41.854517,-87.675975,Pink Line,Chicago Transit Authority GTFS
+40220,Western (Blue - Forest Park Branch),41.875478,-87.688436,Blue Line,Chicago Transit Authority GTFS
+40230,Cumberland,41.984246,-87.838028,Blue Line,Chicago Transit Authority GTFS
+40240,79th,41.750419,-87.625112,Red Line,Chicago Transit Authority GTFS
+40250,Kedzie-Homan,41.874341,-87.70604,Blue Line,Chicago Transit Authority GTFS
+40270,Main,42.033456,-87.679538,Purple Line,Chicago Transit Authority GTFS
+40280,Central (Green),41.887389,-87.76565,Green Line,Chicago Transit Authority GTFS
+40290,Ashland/63rd,41.77886,-87.663766,Green Line,Chicago Transit Authority GTFS
+40300,Indiana,41.821732,-87.621371,Green Line,Chicago Transit Authority GTFS
+40310,Western (Orange),41.804546,-87.684019,Orange Line,Chicago Transit Authority GTFS
+40320,Division,41.903355,-87.666496,Blue Line,Chicago Transit Authority GTFS
+40330,Grand (Red),41.891665,-87.628021,Red Line,Chicago Transit Authority GTFS
+40340,Berwyn,41.977984,-87.658668,Red Line,Chicago Transit Authority GTFS
+40350,UIC-Halsted,41.875474,-87.649707,Blue Line,Chicago Transit Authority GTFS
+40360,Southport,41.943744,-87.663619,Brown Line,Chicago Transit Authority GTFS
+40370,Washington,41.883164,-87.62944,Blue Line,Chicago Transit Authority GTFS
+40380,Clark/Lake,41.885737,-87.630886,Blue Line|Brown Line|Green Line|Orange Line|Pink Line|Purple Line,Chicago Transit Authority GTFS
+40390,Forest Park,41.874257,-87.817318,Blue Line,Chicago Transit Authority GTFS
+40400,Noyes,42.058282,-87.683337,Purple Line,Chicago Transit Authority GTFS
+40420,Cicero (Pink),41.85182,-87.745336,Pink Line,Chicago Transit Authority GTFS
+40430,Clinton (Blue),41.875539,-87.640984,Blue Line,Chicago Transit Authority GTFS
+40440,California (Pink),41.854109,-87.694774,Pink Line,Chicago Transit Authority GTFS
+40450,95th/Dan Ryan,41.722377,-87.624342,Red Line,Chicago Transit Authority GTFS
+40460,Merchandise Mart (Brown/Purple),41.888969,-87.633924,Brown Line|Purple Line,Chicago Transit Authority GTFS
+40470,Racine,41.87592,-87.659458,Blue Line,Chicago Transit Authority GTFS
+40480,Cicero (Green),41.886519,-87.744698,Green Line,Chicago Transit Authority GTFS
+40490,Grand (Blue),41.891189,-87.647578,Blue Line,Chicago Transit Authority GTFS
+40510,Garfield (Green),41.795172,-87.618327,Green Line,Chicago Transit Authority GTFS
+40520,Foster,42.05416,-87.68356,Purple Line,Chicago Transit Authority GTFS
+40530,Diversey (Brown/Purple),41.932732,-87.653131,Brown Line|Purple Line,Chicago Transit Authority GTFS
+40540,Wilson,41.965481568,-87.6579258145,Purple Line|Red Line,Chicago Transit Authority GTFS
+40550,Irving Park (Blue),41.952925,-87.729229,Blue Line,Chicago Transit Authority GTFS
+40560,Jackson (Red),41.878153,-87.627596,Red Line,Chicago Transit Authority GTFS
+40570,California (Blue),41.9221583097,-87.6972439537,Blue Line,Chicago Transit Authority GTFS
+40580,54th/Cermak,41.85177331,-87.75669201,Pink Line,Chicago Transit Authority GTFS
+40590,Damen (Blue),41.9098452343,-87.6775400139,Blue Line,Chicago Transit Authority GTFS
+40600,Kostner,41.853751,-87.733258,Pink Line,Chicago Transit Authority GTFS
+40610,Ridgeland,41.887159,-87.783661,Green Line,Chicago Transit Authority GTFS
+40630,Clark/Division,41.90392,-87.631412,Red Line,Chicago Transit Authority GTFS
+40650,North/Clybourn,41.910655,-87.649177,Red Line,Chicago Transit Authority GTFS
+40660,Armitage (Brown/Purple),41.918217,-87.652644,Brown Line|Purple Line,Chicago Transit Authority GTFS
+40670,Western (Blue - O'Hare Branch),41.916157,-87.687364,Blue Line,Chicago Transit Authority GTFS
+40680,Adams/Wabash,41.879507,-87.626037,Brown Line|Green Line|Orange Line|Pink Line|Purple Line,Chicago Transit Authority GTFS
+40690,Dempster,42.041655,-87.681602,Purple Line,Chicago Transit Authority GTFS
+40700,Laramie,41.887163,-87.754986,Green Line,Chicago Transit Authority GTFS
+40710,Chicago (Brown/Purple),41.89681,-87.635924,Brown Line|Purple Line,Chicago Transit Authority GTFS
+40720,Cottage Grove,41.780309,-87.605857,Green Line,Chicago Transit Authority GTFS
+40730,Washington/Wells,41.882695,-87.63378,Brown Line|Orange Line|Pink Line|Purple Line,Chicago Transit Authority GTFS
+40740,Western (Pink),41.854225,-87.685129,Pink Line,Chicago Transit Authority GTFS
+40750,Harlem (Blue - O'Hare Branch),41.98227,-87.8089,Blue Line,Chicago Transit Authority GTFS
+40760,Granville,41.9944830093,-87.6591866269,Red Line,Chicago Transit Authority GTFS
+40770,Lawrence,41.9689762882,-87.6584869372,Red Line,Chicago Transit Authority GTFS
+40780,Central Park,41.853839,-87.714842,Pink Line,Chicago Transit Authority GTFS
+40790,Monroe (Blue),41.880703,-87.629378,Blue Line,Chicago Transit Authority GTFS
+40800,Sedgwick (Brown/Purple),41.910409,-87.639302,Brown Line|Purple Line,Chicago Transit Authority GTFS
+40810,Illinois Medical District,41.875706,-87.673932,Blue Line,Chicago Transit Authority GTFS
+40820,Rosemont,41.983507,-87.859388,Blue Line,Chicago Transit Authority GTFS
+40830,18th,41.857908,-87.669147,Pink Line,Chicago Transit Authority GTFS
+40840,South Boulevard,42.027612,-87.678329,Purple Line,Chicago Transit Authority GTFS
+40850,Harold Washington Library-State/Van Buren,41.876862,-87.628196,Brown Line|Orange Line|Pink Line|Purple Line,Chicago Transit Authority GTFS
+40870,Francisco,41.966046,-87.701644,Brown Line,Chicago Transit Authority GTFS
+40880,Thorndale,41.9900990857,-87.6590684978,Red Line,Chicago Transit Authority GTFS
+40890,O'Hare,41.97766526,-87.90422307,Blue Line,Chicago Transit Authority GTFS
+40900,Howard,42.019063,-87.672892,Purple Line|Red Line|Yellow Line,Chicago Transit Authority GTFS
+40910,63rd,41.780536,-87.630952,Red Line,Chicago Transit Authority GTFS
+40920,Pulaski (Blue),41.873797,-87.725663,Blue Line,Chicago Transit Authority GTFS
+40930,Midway,41.78661,-87.737875,Orange Line,Chicago Transit Authority GTFS
+40940,Halsted (Green),41.778943,-87.644244,Green Line,Chicago Transit Authority GTFS
+40960,Pulaski (Orange),41.799756,-87.724493,Orange Line,Chicago Transit Authority GTFS
+40970,Cicero (Blue),41.871574,-87.745154,Blue Line,Chicago Transit Authority GTFS
+40980,Harlem (Blue - Forest Park Branch),41.87349,-87.806961,Blue Line,Chicago Transit Authority GTFS
+40990,69th,41.768367,-87.625724,Red Line,Chicago Transit Authority GTFS
+41000,Cermak-Chinatown,41.853206,-87.630968,Red Line,Chicago Transit Authority GTFS
+41010,Rockwell,41.966115,-87.6941,Brown Line,Chicago Transit Authority GTFS
+41020,Logan Square,41.9295342259,-87.7076881549,Blue Line,Chicago Transit Authority GTFS
+41030,Polk,41.871551,-87.66953,Pink Line,Chicago Transit Authority GTFS
+41040,Kedzie (Pink),41.853964,-87.705408,Pink Line,Chicago Transit Authority GTFS
+41050,Linden,42.073153,-87.69073,Purple Line,Chicago Transit Authority GTFS
+41060,Ashland (Orange),41.839234,-87.665317,Orange Line,Chicago Transit Authority GTFS
+41070,Kedzie (Green),41.884321,-87.706155,Green Line,Chicago Transit Authority GTFS
+41080,47th (Green),41.809209,-87.618826,Green Line,Chicago Transit Authority GTFS
+41090,Monroe (Red),41.880745,-87.627696,Red Line,Chicago Transit Authority GTFS
+41120,35th-Bronzeville-IIT,41.831677,-87.625826,Green Line,Chicago Transit Authority GTFS
+41130,Halsted (Orange),41.84678,-87.648088,Orange Line,Chicago Transit Authority GTFS
+41140,King Drive,41.78013,-87.615546,Green Line,Chicago Transit Authority GTFS
+41150,Kedzie (Orange),41.804236,-87.704406,Orange Line,Chicago Transit Authority GTFS
+41160,Clinton (Green/Pink),41.885678,-87.641782,Green Line|Pink Line,Chicago Transit Authority GTFS
+41170,Garfield (Red),41.79542,-87.631157,Red Line,Chicago Transit Authority GTFS
+41180,Kedzie (Brown),41.965996,-87.708821,Brown Line,Chicago Transit Authority GTFS
+41190,Jarvis,42.0160204165,-87.6692571266,Red Line,Chicago Transit Authority GTFS
+41200,Argyle,41.9733220506,-87.6585279483,Red Line,Chicago Transit Authority GTFS
+41210,Wellington (Brown/Purple),41.936033,-87.653266,Brown Line|Purple Line,Chicago Transit Authority GTFS
+41220,Fullerton,41.9253003719,-87.6528684398,Brown Line|Purple Line|Red Line,Chicago Transit Authority GTFS
+41230,47th (Red),41.810318,-87.63094,Red Line,Chicago Transit Authority GTFS
+41240,Addison (Blue),41.9466037164,-87.7184584172,Blue Line,Chicago Transit Authority GTFS
+41250,Central (Purple),42.063987,-87.685617,Purple Line,Chicago Transit Authority GTFS
+41260,Austin (Green),41.887293,-87.774135,Green Line,Chicago Transit Authority GTFS
+41270,43rd,41.816462,-87.619021,Green Line,Chicago Transit Authority GTFS
+41280,Jefferson Park Transit Center,41.9702338623,-87.7615940115,Blue Line,Chicago Transit Authority GTFS
+41290,Kimball,41.967901,-87.713065,Brown Line,Chicago Transit Authority GTFS
+41300,Loyola,42.001073,-87.661061,Red Line,Chicago Transit Authority GTFS
+41310,Paulina,41.943623,-87.670907,Brown Line,Chicago Transit Authority GTFS
+41320,Belmont (Red/Brown/Purple),41.939751,-87.65338,Brown Line|Purple Line|Red Line,Chicago Transit Authority GTFS
+41330,Montrose (Blue),41.9609010454,-87.7429034362,Blue Line,Chicago Transit Authority GTFS
+41340,LaSalle,41.875568,-87.631722,Blue Line,Chicago Transit Authority GTFS
+41350,Oak Park (Green),41.886988,-87.793783,Green Line,Chicago Transit Authority GTFS
+41360,California (Green),41.88422,-87.696234,Green Line,Chicago Transit Authority GTFS
+41380,Bryn Mawr,41.983504,-87.65884,Red Line,Chicago Transit Authority GTFS
+41400,Roosevelt,41.8673785311,-87.6270314058,Green Line|Orange Line|Red Line,Chicago Transit Authority GTFS
+41410,Chicago (Blue),41.896075,-87.655214,Blue Line,Chicago Transit Authority GTFS
+41420,Addison (Red),41.947316173,-87.6536241013,Red Line,Chicago Transit Authority GTFS
+41430,87th,41.735372,-87.624717,Red Line,Chicago Transit Authority GTFS
+41440,Addison (Brown),41.947028,-87.674642,Brown Line,Chicago Transit Authority GTFS
+41450,Chicago (Red),41.896671,-87.628176,Red Line,Chicago Transit Authority GTFS
+41460,Irving Park (Brown),41.954521,-87.674868,Brown Line,Chicago Transit Authority GTFS
+41480,Western (Brown),41.966163,-87.688502,Brown Line,Chicago Transit Authority GTFS
+41490,Harrison,41.874039,-87.627479,Red Line,Chicago Transit Authority GTFS
+41500,Montrose (Brown),41.961756,-87.675047,Brown Line,Chicago Transit Authority GTFS
+41510,Morgan (Green/Pink),41.88557676,-87.65212993,Green Line|Pink Line,Chicago Transit Authority GTFS
+41660,Lake (Subway),41.884809,-87.627813,Red Line,Chicago Transit Authority GTFS
+41670,Conservatory-Central Park Drive,41.884904,-87.716523,Green Line,Chicago Transit Authority GTFS
+41680,Oakton-Skokie,42.02624348,-87.74722084,Yellow Line,Chicago Transit Authority GTFS
+41690,Cermak-McCormick Place,41.853115,-87.626402,Green Line,Chicago Transit Authority GTFS
+41700,Washington/Wabash,41.88322,-87.626189,Brown Line|Green Line|Orange Line|Pink Line|Purple Line,Chicago Transit Authority GTFS
+41710,Damen (Green),41.88497405,-87.67689149,Green Line,Chicago Transit Authority GTFS

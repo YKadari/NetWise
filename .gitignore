@@ -29,3 +29,10 @@ Thumbs.db
 
 # Large raw datasets
 data/raw/
+FY27_safmrs.xlsx
+cb_2020_us_zcta520_500k.zip
+Zip_zori_uc_sfrcondomfr_sm_month.csv
+google_transit.zip
+
+# Locally regenerated housing outputs (include Zillow values; terms not cleared)
+data/processed/
