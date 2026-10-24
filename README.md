@@ -77,3 +77,6 @@ Batch 4A adds:
 - `POST /api/rental/compare` to evaluate two offers against one financial profile and return factual differences, including normalized monthly costs when lease terms differ.
 
 Run the hypothetical synthetic examples with `.\.venv\Scripts\python.exe -m scripts.demo_rental_finances`. See [the Batch 4A report](docs/BATCH_4A_REPORT.md) for request examples, formulas, assumptions, test results, and limitations. All financial inputs are request-only: the API does not store or log offer or profile bodies. Unknown terms remain visible and are not filled with typical lease assumptions.
+# Batch 4B lease extraction
+
+The backend now exposes an optional Gemini-powered lease extraction and human confirmation workflow. Configure `GEMINI_API_KEY` in the ignored repository-root `.env` (never commit it); `GEMINI_MODEL` optionally selects another supported model. The default is `gemini-3.5-flash-lite`. Extraction accepts pasted text or a bounded PDF upload, returns candidate terms with evidence and uncertainty, and requires field-by-field user review before a `RentalOffer` can be evaluated. The service does not persist leases and sends submitted content to Google Gemini; use synthetic documents for demos. See [Batch 4B implementation notes](docs/BATCH_4B_REPORT.md) for endpoints, privacy, limits, and verification status.

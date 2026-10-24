@@ -40,10 +40,11 @@ class TermProvenance(StrictModel):
     source_reference: str | None = Field(default=None, max_length=500)
     confidence: Annotated[Decimal, Field(ge=0, le=1)] | None = None
     review_state: Literal["needs_review", "confirmed", "corrected"] = "confirmed"
+    reviewed_by_user: StrictBool = False
 
     @model_validator(mode="after")
     def extraction_requires_review(self) -> "TermProvenance":
-        if self.source_type == "document_extracted" and self.review_state == "confirmed":
+        if self.source_type == "document_extracted" and self.review_state == "confirmed" and not self.reviewed_by_user:
             raise ValueError("Document-extracted terms require explicit user review before confirmation")
         return self
 

@@ -18,6 +18,7 @@ from shapely.geometry import shape
 
 from backend.app.api.routes import router
 from backend.app.api.rental_routes import router as rental_router
+from backend.app.api.lease_routes import router as lease_router
 from backend.app.optimization.data_loader import PUBLIC_CORE, load_public_areas, validate_areas
 from backend.app.optimization.models import HousingArea
 
@@ -88,7 +89,7 @@ def create_app(
         application.state.geojson = _load_geojson(Path(geo_dir))
         yield
 
-    application = FastAPI(title="NestWise API", version="4A", lifespan=lifespan, debug=False)
+    application = FastAPI(title="NestWise API", version="4B", lifespan=lifespan, debug=False)
 
     @application.exception_handler(RequestValidationError)
     async def validation_error_handler(_, exc: RequestValidationError) -> JSONResponse:
@@ -109,6 +110,7 @@ def create_app(
     )
     application.include_router(router)
     application.include_router(rental_router)
+    application.include_router(lease_router)
     return application
 
 
