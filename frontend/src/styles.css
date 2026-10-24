@@ -1,0 +1,22 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  body { @apply bg-canvas font-sans antialiased; }
+  button, input { font: inherit; }
+}
+@layer components {
+  .panel { @apply rounded-2xl border border-line bg-white shadow-[0_8px_28px_rgba(23,44,43,0.04)]; }
+  .surface { @apply rounded-2xl border border-line bg-white shadow-[0_8px_28px_rgba(23,44,43,0.045)]; }
+  .eyebrow { @apply text-[11px] font-bold uppercase tracking-[0.16em]; }
+  .kicker { @apply text-xs font-bold uppercase tracking-[0.16em] text-forest; }
+  .label { @apply block text-sm font-bold text-ink; }
+  .hint { @apply mt-1 text-xs text-muted; }
+  .field { @apply w-full rounded-xl border border-line bg-white px-3 py-2.5 text-sm text-ink outline-none transition focus:border-forest focus:ring-2 focus:ring-mint; }
+}
+@media (prefers-reduced-motion: reduce) { *, *::before, *::after { scroll-behavior: auto !important; animation-duration: 0.01ms !important; transition-duration: 0.01ms !important; } }
+.rec-explanation { display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 3; overflow: hidden; }
+@media (max-width: 767px) {
+  #area-jump { flex: 1; min-width: 0; }
+}

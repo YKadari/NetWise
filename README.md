@@ -41,3 +41,39 @@ Batch 2B provides a local FastAPI server over the public core. From the reposito
 ```
 
 Open `http://127.0.0.1:8000/docs` for the API explorer or `http://127.0.0.1:8000/api/health` for the data health check. CORS permits `http://localhost:5173` by default; set `NESTWISE_CORS_ORIGINS` to a comma-separated list of explicit origins to change it. Run all tests with `.\.venv\Scripts\python.exe -m pytest -q`. See [the Batch 2B report](docs/BATCH_2B_REPORT.md) for endpoints, examples, performance, and limits.
+
+## Batch 3A: Chicago housing explorer
+
+Start the backend as above, then use a second terminal from the repository root:
+
+```powershell
+cd frontend
+npm ci
+npm run dev
+```
+
+Open `http://127.0.0.1:5173/`. Vite proxies `/api` to the local backend at `127.0.0.1:8000`; the browser needs no API key. The explorer uses the public HUD/Census/CTA data and does not load the local Zillow-enriched output. It shows ZCTA boundaries, eligibility, shortlist recommendations, area details, and optional CTA stations. Rents are HUD benchmarks rather than available listings, and distances are straight-line proxies rather than travel times.
+
+Frontend checks:
+
+```powershell
+cd frontend
+npm run typecheck
+npm test
+npm run build
+```
+
+See [the Batch 3A report](docs/BATCH_3A_REPORT.md) for design, live verification, and limitations. Node 20.11.0 or a compatible newer release is required by this project's selected frontend dependencies.
+
+Batch 3B adds exact budget sensitivity and a two-area comparison flow to the Chicago explorer. Nearby budget counts and the next threshold come from `POST /api/sensitivity`; area facts and measured differences come from `POST /api/areas/compare`. Run the same frontend commands above. See [the Batch 3B report](docs/BATCH_3B_REPORT.md) for responsive behavior, real-data verification, and current limits.
+
+## Current product direction: rental commitments
+
+The product direction has expanded from comparing Chicago areas to evaluating the financial commitments in a specific rental offer. The existing Chicago explorer remains available; rental-term calculations are a separate deterministic API and do not use housing-area benchmarks or persist renter data.
+
+Batch 4A adds:
+
+- `POST /api/rental/evaluate` to model known lease costs, payment timing, concessions, upfront cash, deposits, monthly cash flow, and affordability against user-supplied take-home finances.
+- `POST /api/rental/compare` to evaluate two offers against one financial profile and return factual differences, including normalized monthly costs when lease terms differ.
+
+Run the hypothetical synthetic examples with `.\.venv\Scripts\python.exe -m scripts.demo_rental_finances`. See [the Batch 4A report](docs/BATCH_4A_REPORT.md) for request examples, formulas, assumptions, test results, and limitations. All financial inputs are request-only: the API does not store or log offer or profile bodies. Unknown terms remain visible and are not filled with typical lease assumptions.
