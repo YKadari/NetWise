@@ -34,11 +34,12 @@ def _schema(catalog: dict[str, dict[str, str]]) -> dict[str, object]:
     return {"type": "object", "properties": properties, "required": list(properties), "additionalProperties": False}
 
 
-def generate_selection(
-    facts: dict[str, object],
-    catalog: dict[str, dict[str, str]],
+def generate_structured_json(
+    system_instruction: str,
+    context: dict[str, object],
+    response_schema: dict[str, object],
     *,
-    task_instruction: str | None = None,
+    max_output_tokens: int = 700,
 ) -> object:
     key = get_api_key()
     if not key:
@@ -50,15 +51,13 @@ def generate_selection(
         raise GeminiConfigurationError("sdk_unavailable") from None
     try:
         client = genai.Client(api_key=key, http_options=types.HttpOptions(timeout=30_000))
-        # Only fixed fact names, evaluator-derived values, and eligible IDs are sent.
-        context = {"facts": facts, "allowed_ids": {field: list(choices) for field, choices in catalog.items()}}
         response = client.models.generate_content(
             model=get_model(),
             contents=json.dumps(context, sort_keys=True),
             config=types.GenerateContentConfig(
-                system_instruction=SYSTEM_PROMPT + (" " + task_instruction if task_instruction else ""),
-                response_mime_type="application/json", response_json_schema=_schema(catalog),
-                temperature=0, max_output_tokens=700,
+                system_instruction=system_instruction,
+                response_mime_type="application/json", response_json_schema=response_schema,
+                temperature=0, max_output_tokens=max_output_tokens,
             ),
         )
         if not response.text:
@@ -81,3 +80,15 @@ def generate_selection(
         if isinstance(exc, (json.JSONDecodeError, GeminiOutputError)):
             raise GeminiOutputError() from None
         raise GeminiProviderError() from None
+
+
+def generate_selection(
+    facts: dict[str, object],
+    catalog: dict[str, dict[str, str]],
+    *,
+    task_instruction: str | None = None,
+) -> object:
+    # Only fixed fact names, evaluator-derived values, and eligible IDs are sent.
+    context: dict[str, object] = {"facts": facts, "allowed_ids": {field: list(choices) for field, choices in catalog.items()}}
+    instruction = SYSTEM_PROMPT + (" " + task_instruction if task_instruction else "")
+    return generate_structured_json(instruction, context, _schema(catalog), max_output_tokens=700)

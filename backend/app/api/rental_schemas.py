@@ -44,6 +44,7 @@ class RentalComparisonResponse(BaseModel):
     differences: dict[str, Any]
     comparison_notes: list[str]
     method: str
+    interpretation: dict[str, str]
 
 
 __all__ = ["RentalEvaluateRequest", "RentalCompareRequest", "RentalEvaluationResponse", "RentalComparisonResponse"]

@@ -1,5 +1,5 @@
 import { ApiError } from './api'
-import type { FinancialProfile, LeaseConfirmation, LeaseDraft, LeaseServiceStatus, RentalComparison, RentalDecisionBrief, RentalEvaluation, RentalFollowUpResponse, RentalOffer, ReviewDecision, StressAiInterpretation, StressResult, StressScenario } from '../types/rental'
+import type { ClauseExplanation, FinancialProfile, LeaseConfirmation, LeaseDraft, LeaseServiceStatus, RentalComparison, RentalComparisonExplanation, RentalDecisionBrief, RentalEvaluation, RentalFollowUpResponse, RentalOffer, ReviewDecision, StressAiInterpretation, StressResult, StressScenario } from '../types/rental'
 
 const messages: Record<number, string> = {
   413: 'The PDF exceeds the 10 MB limit. Choose a smaller file.',
@@ -47,6 +47,26 @@ async function rentalRequest<T>(path: string, options: RequestInit = {}): Promis
         504: 'The AI explanation took too long. The deterministic interpretation remains available.',
       }
       throw new ApiError(aiMessage[response.status] || 'AI explanations are unavailable. The deterministic interpretation remains available.', response.status)
+    }
+    if (path === '/lease/explain-clause') {
+      const clauseMessage: Record<number, string> = {
+        422: 'Enter a short, meaningful lease excerpt to explain.',
+        429: 'AI explanations have reached their request limit. You can continue the guided analysis without AI.',
+        502: 'The explanation could not be verified. Keep the term marked unsure and ask for clarification.',
+        503: 'AI clause explanation is unavailable. Continue with “I’m not sure” or ask for written clarification.',
+        504: 'The explanation took too long. Keep the term marked unsure and continue the guided analysis.',
+      }
+      throw new ApiError(clauseMessage[response.status] || 'AI clause explanation is unavailable. Continue the guided analysis without it.', response.status)
+    }
+    if (path === '/rental/comparison-explanation') {
+      const comparisonMessage: Record<number, string> = {
+        422: 'The rentals could not be compared from the supplied terms. Check both offers and retry.',
+        429: 'AI explanations have reached their request limit. The known-cost comparison remains available.',
+        502: 'The AI explanation could not be verified. The measured comparison remains available.',
+        503: 'AI explanation is unavailable. The measured comparison remains available.',
+        504: 'The AI explanation took too long. The measured comparison remains available.',
+      }
+      throw new ApiError(comparisonMessage[response.status] || 'AI comparison explanation is unavailable. The measured comparison remains available.', response.status)
     }
     if (path === '/rental/follow-ups') {
       throw new ApiError('Suggested questions could not be refreshed. Recalculate the rental terms to try again.', response.status)
@@ -164,7 +184,7 @@ export async function getRentalFollowUps(offer: RentalOffer, financial_profile?:
 
 export async function compareRentals(left_offer: RentalOffer, right_offer: RentalOffer, financial_profile?: FinancialProfile): Promise<RentalComparison> {
   const result = await rentalRequest<RentalComparison>('/rental/compare', json({ left_offer, right_offer, financial_profile }))
-  if (!result.left?.monthly_costs || !result.right?.monthly_costs || !result.differences?.left_minus_right) throw new ApiError('The rental comparison is incomplete.')
+  if (!result.left?.monthly_costs || !result.right?.monthly_costs || !result.differences?.left_minus_right || result.interpretation?.source !== 'deterministic' || !result.interpretation.main_tradeoff) throw new ApiError('The rental comparison is incomplete.')
   return result
 }
 
@@ -177,5 +197,17 @@ export async function stressRental(offer: RentalOffer, scenario: StressScenario,
 export async function explainStress(offer: RentalOffer, scenario: StressScenario, financial_profile?: FinancialProfile, signal?: AbortSignal): Promise<StressAiInterpretation> {
   const result = await rentalRequest<StressAiInterpretation>('/rental/stress-explanation', { ...json({ offer, scenario, financial_profile }), signal })
   if (result.source !== 'gemini' || !result.headline || !result.main_consequence || !Array.isArray(result.statement_ids)) throw new ApiError('The AI scenario explanation is incomplete.')
+  return result
+}
+
+export async function explainLeaseClause(clause_text: string, context: 'deposit' | 'move_in_payment' | 'monthly_charge' | 'utilities' | 'prepaid_rent' | 'lease_obligation', signal?: AbortSignal): Promise<ClauseExplanation> {
+  const result = await rentalRequest<ClauseExplanation>('/lease/explain-clause', { ...json({ clause_text, context }), signal })
+  if (result.source !== 'gemini' || typeof result.can_analyze !== 'boolean' || !Array.isArray(result.important_uncertainties) || !Array.isArray(result.questions_to_ask) || !result.legal_note) throw new ApiError('The clause explanation could not be verified.')
+  return result
+}
+
+export async function explainRentalComparison(left_offer: RentalOffer, right_offer: RentalOffer, financial_profile?: FinancialProfile, signal?: AbortSignal): Promise<RentalComparisonExplanation> {
+  const result = await rentalRequest<RentalComparisonExplanation>('/rental/comparison-explanation', { ...json({ left_offer, right_offer, financial_profile }), signal })
+  if (result.source !== 'gemini' || !result.main_tradeoff || !result.upfront_comparison || !result.monthly_and_lease_comparison || !Array.isArray(result.statement_ids)) throw new ApiError('The comparison explanation could not be verified.')
   return result
 }

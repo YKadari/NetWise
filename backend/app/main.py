@@ -23,6 +23,8 @@ from backend.app.api.rental_routes import router as rental_router
 from backend.app.api.lease_routes import router as lease_router
 from backend.app.api.stress_routes import router as stress_router
 from backend.app.api.decision_brief_routes import router as decision_brief_router
+from backend.app.api.clause_routes import router as clause_router
+from backend.app.api.comparison_advisor_routes import router as comparison_advisor_router
 from backend.app.optimization.data_loader import PUBLIC_CORE, load_public_areas, validate_areas
 from backend.app.optimization.models import HousingArea
 
@@ -145,6 +147,8 @@ def create_app(
     application.include_router(lease_router)
     application.include_router(stress_router)
     application.include_router(decision_brief_router)
+    application.include_router(clause_router)
+    application.include_router(comparison_advisor_router)
     assets = Path(static_dir) if static_dir is not None else PROJECT_ROOT / "frontend" / "dist"
     if (assets / "index.html").is_file():
         application.mount("/", SPAStaticFiles(directory=assets, html=True), name="frontend")

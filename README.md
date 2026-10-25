@@ -112,6 +112,8 @@ Batch 7D removes Firebase sign-in and Firestore quota dependencies. Gemini extra
 
 Batch 8 improves PDF request handling and simplifies the lease review around identified costs and questions to ask. See [Batch 8 PDF and UX report](docs/BATCH_8_PDF_UX.md) for the live synthetic PDF result, remaining timeout uncertainty, and testing instructions.
 
+Batch 10D adds an optional, excerpt-only AI lease-clause explainer to the Guided Rental Advisor; it does not change guided answers or financial calculations. Batch 10E adds deterministic rental comparison interpretation and an explicit AI prioritization action. Both use the existing local Gemini gate and request limiter; public Gemini remains disabled in Render. See [Batch 10D clause explainer](docs/BATCH_10D_CLAUSE_EXPLAINER.md) and [Batch 10E comparison advisor](docs/BATCH_10E_COMPARISON_ADVISOR.md). Backend tests require a working Python installation.
+
 ## Production preview on Render
 
 The root `render.yaml` defines one Docker Web Service, uses `/api/health`, and disables automatic deployment. Review the settings and choose the repository branch in Render before creating the service. Keep `NESTWISE_ENABLE_PUBLIC_GEMINI=false`; do not add a Gemini key until shared abuse controls and provider spend limits are implemented. No frontend key is required. To build and run the same image locally:

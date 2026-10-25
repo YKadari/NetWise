@@ -13,6 +13,7 @@ from backend.app.api.rental_schemas import (
 )
 from backend.app.rental.calculations import evaluate_rental
 from backend.app.rental.comparisons import compare_rentals
+from backend.app.ai_explanations.comparison_advisor import deterministic_comparison_interpretation
 
 
 router = APIRouter(prefix="/api/rental", tags=["rental commitments"])
@@ -40,6 +41,8 @@ def rental_evaluate(request: RentalEvaluateRequest) -> dict[str, object]:
 @router.post("/compare", response_model=RentalComparisonResponse)
 def rental_compare(request: RentalCompareRequest) -> dict[str, object]:
     try:
-        return _numeric_json(compare_rentals(request.left_offer, request.right_offer, request.financial_profile))
+        result = compare_rentals(request.left_offer, request.right_offer, request.financial_profile)
+        result["interpretation"] = deterministic_comparison_interpretation(result)
+        return _numeric_json(result)
     except ValueError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc

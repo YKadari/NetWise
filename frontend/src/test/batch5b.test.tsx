@@ -286,13 +286,43 @@ describe('financial results, stress, and comparison', () => {
     expect(String(fetchMock.mock.calls[0][0])).toBe('/api/rental/stress-explanation')
   })
   it('compares two saved offers using the API response and flags unequal terms', async () => {
-    const result = { left: evaluation, right: { ...evaluation, rental_label: 'Synthetic B' }, differences: { left_minus_right: { base_rent_per_month: -150 }, lease_terms_differ: true, total_period_costs_directly_comparable: false, unknown_cost_categories: { left: [], right: [] } }, comparison_notes: ['Lease durations differ.'], method: 'Shared profile.' }
+      const interpretation = { source: 'deterministic', main_tradeoff: 'Different measured costs.', upfront_comparison: 'Known move-in values.', monthly_and_lease_comparison: 'Measured monthly values.', important_uncertainties: 'No unknowns reported.', what_could_change_the_decision: 'Confirm written terms.' }
+      const result = { left: evaluation, right: { ...evaluation, rental_label: 'Synthetic B' }, differences: { left_minus_right: { base_rent_per_month: -150 }, lease_terms_differ: true, total_period_costs_directly_comparable: false, unknown_cost_categories: { left: [], right: [] } }, comparison_notes: ['Lease durations differ.'], method: 'Shared profile.', interpretation }
     vi.stubGlobal('fetch', vi.fn().mockResolvedValue(jsonResponse(result)))
     render(<RentalComparison a={demoOffers[0]} b={demoOffers[1]} onEdit={vi.fn()} onDemo={vi.fn()}/>)
     fireEvent.click(screen.getByRole('button', { name: 'Compare the offers' }))
     expect(await screen.findByText(/Lease lengths differ/)).toBeInTheDocument()
     expect(within(screen.getByLabelText('Rental comparison results')).getByText('Measured differences')).toBeInTheDocument()
   })
+    it('shows deterministic tradeoffs first and requests AI prioritization only after an explicit action', async () => {
+      const deterministic = { source: 'deterministic', main_tradeoff: 'Measured tradeoffs; no winner.', upfront_comparison: 'A: $2,000; B: $2,100.', monthly_and_lease_comparison: 'Known monthly totals are subtotals.', important_uncertainties: 'Utilities remain unknown.', what_could_change_the_decision: 'Confirm written terms.' }
+      const comparison = { left: evaluation, right: evaluation, differences: { left_minus_right: {}, lease_terms_differ: false, total_period_costs_directly_comparable: true, unknown_cost_categories: { left: [], right: [] } }, comparison_notes: [], method: 'Synthetic.', interpretation: deterministic }
+      const ai = { source: 'gemini', main_tradeoff: 'Prioritized known costs.', upfront_comparison: 'Review move-in cash.', monthly_and_lease_comparison: 'Check recurring amounts.', important_uncertainties: 'Utilities are unknown.', what_could_change_the_decision: 'Ask for itemized terms.', statement_ids: ['a','b','c','d','e'] }
+      const mocked = vi.fn().mockImplementation((url: string) => Promise.resolve(jsonResponse(url.endsWith('/comparison-explanation') ? ai : comparison)))
+      vi.stubGlobal('fetch', mocked)
+      render(<RentalComparison a={demoOffers[0]} b={demoOffers[1]} status={{ configured: true, model: 'test', service_ready: true }} onEdit={vi.fn()} onDemo={vi.fn()}/> )
+      fireEvent.click(screen.getByRole('button', { name: 'Compare the offers' }))
+      expect(await screen.findByText('Measured tradeoffs; no winner.')).toBeInTheDocument()
+      expect(mocked).toHaveBeenCalledTimes(1)
+      fireEvent.click(screen.getByRole('button', { name: 'Explain these tradeoffs with AI' }))
+      expect(await screen.findByText('Prioritized known costs.')).toBeInTheDocument()
+      expect(String(mocked.mock.calls[1][0])).toBe('/api/rental/comparison-explanation')
+    })
+    it('discards an AI explanation when either comparison offer changes', async () => {
+      const deterministic = { source: 'deterministic', main_tradeoff: 'Current tradeoff.', upfront_comparison: 'Upfront.', monthly_and_lease_comparison: 'Monthly.', important_uncertainties: 'Unknowns.', what_could_change_the_decision: 'Confirm.' }
+      const comparison = { left: evaluation, right: evaluation, differences: { left_minus_right: {}, lease_terms_differ: false, total_period_costs_directly_comparable: true, unknown_cost_categories: { left: [], right: [] } }, comparison_notes: [], method: 'Synthetic.', interpretation: deterministic }
+      let resolveAi: ((response: ReturnType<typeof jsonResponse>) => void) | undefined
+      const mocked = vi.fn((url: string) => url.endsWith('/comparison-explanation') ? new Promise<ReturnType<typeof jsonResponse>>(resolve => { resolveAi = resolve }) : Promise.resolve(jsonResponse(comparison)))
+      vi.stubGlobal('fetch', mocked)
+      const view = render(<RentalComparison a={demoOffers[0]} b={demoOffers[1]} status={{ configured: true, model: 'test', service_ready: true }} onEdit={vi.fn()} onDemo={vi.fn()}/> )
+      fireEvent.click(screen.getByRole('button', { name: 'Compare the offers' }))
+      await screen.findByText('Current tradeoff.')
+      fireEvent.click(screen.getByRole('button', { name: 'Explain these tradeoffs with AI' }))
+      view.rerender(<RentalComparison a={{ ...demoOffers[0], rental_label: 'Changed offer' }} b={demoOffers[1]} status={{ configured: true, model: 'test', service_ready: true }} onEdit={vi.fn()} onDemo={vi.fn()}/> )
+      resolveAi?.(jsonResponse({ source: 'gemini', main_tradeoff: 'Stale answer.', upfront_comparison: '', monthly_and_lease_comparison: '', important_uncertainties: '', what_could_change_the_decision: '', statement_ids: [] }))
+      await waitFor(() => expect(screen.getByRole('button', { name: 'Compare the offers' })).toBeEnabled())
+      expect(screen.queryByText('Stale answer.')).not.toBeInTheDocument()
+    })
   it('shows one clear comparison action when both saved slots exist and labels replacement explicitly', () => {
     const onCompare = vi.fn()
     const onSave = vi.fn()
@@ -312,7 +342,7 @@ describe('financial results, stress, and comparison', () => {
     const first = render(<RentalComparison a={demoOffers[0]} b={demoOffers[1]} onEdit={vi.fn()} onDemo={vi.fn()}/> )
     fireEvent.click(screen.getByRole('button', { name: 'Compare the offers' }))
     first.rerender(<RentalComparison a={{ ...demoOffers[0], rental_label: 'Replacement A' }} b={demoOffers[1]} onEdit={vi.fn()} onDemo={vi.fn()}/> )
-    resolveResponse?.(jsonResponse({ left: evaluation, right: evaluation, differences: { left_minus_right: {}, lease_terms_differ: false, total_period_costs_directly_comparable: true, unknown_cost_categories: { left: [], right: [] } }, comparison_notes: [], method: 'Synthetic.' }))
+      resolveResponse?.(jsonResponse({ left: evaluation, right: evaluation, differences: { left_minus_right: {}, lease_terms_differ: false, total_period_costs_directly_comparable: true, unknown_cost_categories: { left: [], right: [] } }, comparison_notes: [], method: 'Synthetic.', interpretation: { source: 'deterministic', main_tradeoff: 'A minus B', upfront_comparison: '', monthly_and_lease_comparison: '', important_uncertainties: '', what_could_change_the_decision: '' } }))
     await waitFor(() => expect(screen.getByRole('button', { name: 'Compare the offers' })).toBeEnabled())
     expect(screen.queryByLabelText('Rental comparison results')).not.toBeInTheDocument()
   })

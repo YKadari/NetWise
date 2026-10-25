@@ -71,6 +71,21 @@ describe('Batch 9 mapping to the existing evaluator', () => {
 })
 
 describe('Batch 9 guided flow', () => {
+  it('explains only an explicitly pasted clause and leaves guided answers untouched', async () => {
+    const fetchMock = vi.fn().mockResolvedValue({ ok: true, json: async () => ({ source: 'gemini', can_analyze: true, plain_language_explanation: 'This appears to say the renter pays utilities.', possible_financial_implications: [], important_uncertainties: ['The exact bills are not listed.'], questions_to_ask: ['Which utilities are billed separately?'], source_excerpt: 'responsible for utilities', limitations: 'The full agreement may add detail.', legal_note: 'Informational only; this does not determine your legal rights.' }) })
+    vi.stubGlobal('fetch', fetchMock)
+    const onEvaluate = vi.fn()
+    render(<GuidedAdvisor initial={sampleGuided()} busy={false} status={{ ...unavailable, configured: true, service_ready: true }} onEvaluate={onEvaluate}/> )
+    fireEvent.click(screen.getByRole('button', { name: 'Continue' }))
+    fireEvent.click(screen.getByText('Need help understanding a lease clause?'))
+    fireEvent.change(screen.getByLabelText('Lease clause excerpt'), { target: { value: 'The tenant is responsible for utilities as billed by the provider.' } })
+    fireEvent.click(screen.getByRole('button', { name: 'Explain clause' }))
+    expect(await screen.findByText('This appears to say the renter pays utilities.')).toBeInTheDocument()
+    expect(JSON.parse(fetchMock.mock.calls[0][1].body)).toEqual({ clause_text: 'The tenant is responsible for utilities as billed by the provider.', context: 'move_in_payment' })
+    expect(onEvaluate).not.toHaveBeenCalled()
+    expect(screen.getByText('Before you move in')).toBeInTheDocument()
+  })
+
   it('navigates backward with answers intact and hides conditional inputs', () => {
     render(<GuidedAdvisor busy={false} status={unavailable} onEvaluate={vi.fn()}/>)
     expect(screen.getByText('Step 1 of 4')).toBeInTheDocument()
@@ -89,7 +104,7 @@ describe('Batch 9 guided flow', () => {
   it('submits the sample through the evaluator with no profile and exposes AI-disabled help', () => {
     const onEvaluate = vi.fn()
     render(<GuidedAdvisor initial={sample} busy={false} status={unavailable} onEvaluate={onEvaluate}/>)
-    for (let n = 1; n <= 3; n++) { fireEvent.click(screen.getByRole('button', { name: 'Continue' })); expect(screen.getByText(`Step ${n + 1} of 4`)).toBeInTheDocument(); if (n === 1) expect(screen.getByText(/Live AI analysis is unavailable here/)).toBeInTheDocument() }
+    for (let n = 1; n <= 3; n++) { fireEvent.click(screen.getByRole('button', { name: 'Continue' })); expect(screen.getByText(`Step ${n + 1} of 4`)).toBeInTheDocument(); if (n === 1) { fireEvent.click(screen.getByText('Need help understanding a lease clause?')); expect(screen.getByText(/AI explanation is unavailable/)).toBeInTheDocument(); expect(screen.getByText(/Check any defined terms or referenced sections/)).toBeInTheDocument() } }
     expect(screen.getByRole('button', { name: 'See my rental costs' })).toBeInTheDocument()
     fireEvent.click(screen.getByRole('button', { name: 'See my rental costs' }))
     expect(onEvaluate).toHaveBeenCalledOnce()

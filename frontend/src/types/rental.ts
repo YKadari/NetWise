@@ -98,6 +98,14 @@ export interface RentalComparison {
   differences: { left_minus_right: Record<string, number | null>; lease_terms_differ: boolean; total_period_costs_directly_comparable: boolean; unknown_cost_categories: { left: string[]; right: string[] } }
   comparison_notes: string[]
   method: string
+  interpretation: {
+    source: 'deterministic'
+    main_tradeoff: string
+    upfront_comparison: string
+    monthly_and_lease_comparison: string
+    important_uncertainties: string
+    what_could_change_the_decision: string
+  }
 }
 
 export type LeaseFieldId = 'rental_label' | 'monthly_base_rent' | 'lease_term_months' | 'lease_start_date' | 'occupants' | 'recurring_charges' | 'recurring_charges_status' | 'utilities' | 'security_deposit' | 'first_month_rent_due_upfront' | 'last_month_rent_due_upfront' | 'nonrefundable_fees' | 'nonrefundable_fees_status' | 'other_charges' | 'other_charges_status' | 'holding_deposit' | 'holding_deposit_status' | 'concessions' | 'early_termination' | 'lease_break_fee' | 'notice_requirements' | 'renewal_or_rent_change' | 'late_payment_fees' | 'roommate_liability' | 'conditional_concessions'
@@ -106,6 +114,28 @@ export interface LeaseDraft { draft_id: string; terms: CandidateTerm[]; general_
 export interface ReviewDecision { field_id: LeaseFieldId; action: 'accept' | 'correct' | 'mark_unknown' | 'confirm_none'; value?: unknown }
 export interface LeaseConfirmation { confirmed_offer: RentalOffer; review_history: unknown[]; confirmed_clauses: Record<string, unknown> }
 export interface LeaseServiceStatus { configured: boolean; model: string; service_ready: boolean }
+
+export interface ClauseExplanation {
+  source: 'gemini'
+  can_analyze: boolean
+  plain_language_explanation: string
+  possible_financial_implications: string[]
+  important_uncertainties: string[]
+  questions_to_ask: string[]
+  source_excerpt: string | null
+  limitations: string
+  legal_note: string
+}
+
+export interface RentalComparisonExplanation {
+  source: 'gemini'
+  main_tradeoff: string
+  upfront_comparison: string
+  monthly_and_lease_comparison: string
+  important_uncertainties: string
+  what_could_change_the_decision: string
+  statement_ids: string[]
+}
 
 export type StressScenario =
   | { type: 'utility_increase'; additional_monthly_amount: number; first_affected_month: number; last_affected_month: number }
