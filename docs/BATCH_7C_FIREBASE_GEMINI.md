@@ -26,7 +26,7 @@ Before calling Gemini, an atomic Firestore transaction reserves one daily attemp
 
 The global limit has no default and must be set deliberately at or below the actual Gemini model/account quota. Failed provider calls consume daily attempts; retries are not refunded. In-flight reservations expire after three minutes if a process exits unexpectedly. A successful or failed request releases the in-flight slot when possible.
 
-Firestore stores daily counters, short-lived concurrency reservation IDs/timestamps, 30-day expiration timestamps, and per-user counters under a SHA-256 hash of the Firebase UID. It does not store the raw UID, email, ID token, lease text/PDF, Gemini response, or rental profile. Configure Firestore TTL on the `expire_at` field for the `nestwise_gemini_daily` collection group; TTL cleanup is asynchronous, so 30 days is a retention target rather than an exact deletion time.
+Firestore stores daily counters, short-lived concurrency reservation IDs/timestamps, 30-day expiration timestamps, and per-user counters under a SHA-256 hash of the Firebase UID. It does not store the raw UID, email, ID token, lease text/PDF, Gemini response, or rental profile. **Firestore TTL is not enabled/configured for this deployment.** That does not prevent quota enforcement: requests use the current UTC date document and atomic transactions; expiration timestamps are only for eventual cleanup. Without TTL, old daily and per-user counter documents remain stored and storage can grow over time. If TTL is enabled later, configure the `expire_at` field for both collection groups, `nestwise_gemini_daily` and `users` (the nested per-user documents use the generic `users` collection group). TTL deletion is asynchronous, so 30 days is a retention target rather than an exact deletion time. See [Firestore TTL documentation](https://firebase.google.com/docs/firestore/ttl).
 
 These controls reduce accidental use and bound daily attempts. They are not a hard monetary spend cap: multiple accounts, configuration mistakes, provider-side pricing/limits, other API clients, and outages remain relevant. Keep Google's account/model quota controls in place and set the global application limit conservatively. The service fails closed if Firestore cannot enforce a reservation.
 
@@ -62,7 +62,7 @@ The following actions require the project owner in Firebase/Google Cloud/Render;
 
 1. Create or select a Firebase project, add a web app, enable Google as a Firebase Authentication provider, and add the local and intended Render hostnames to authorized domains. Firebase sign-in follows the documented popup/redirect flow and authentication-state listener.
 2. Create the Firestore database in the same project and configure the server service account with only the access needed for token verification and Firestore transactions. Provide the service-account JSON to the backend through the local ignored `.env` or Render secret settings. Do not grant broad project-owner permissions to the runtime service account.
-3. Configure `expire_at` TTL for the `nestwise_gemini_daily` collection group and verify the service account can execute transactions.
+3. Verify the service account can execute transactions. TTL is optional for enforcement and is currently not enabled. If enabling cleanup later, configure `expire_at` TTL for both `nestwise_gemini_daily` and `users` collection groups, considering whether other project data uses a collection group named `users`.
 4. Confirm the Gemini model and account quota in Google's console/documentation. Set `NESTWISE_GEMINI_GLOBAL_DAILY_LIMIT` no higher than the verified applicable free-tier daily quota; this code does not assume a quota value and does not change billing.
 5. Set the four `VITE_FIREBASE_*` public build variables in the Render service environment so Docker's frontend build can compile the Firebase client configuration. Keep all Gemini and service-account values server-side.
 6. Keep `NESTWISE_ENABLE_PUBLIC_GEMINI=false` while configuring and testing. Verify sign-in, invalid-token rejection, user/global limits, concurrency limits, and Firestore failure behavior with synthetic content on a private/local instance.
@@ -93,6 +93,8 @@ The new frontend Firebase tests cover initialization/configuration, auth state, 
 
 No live Firebase sign-in, Firestore transaction, or Gemini request was performed. These steps require the owner's Firebase web config, server credential, Firestore database/IAM, Gemini API key, and confirmed provider quota. No cloud project or resource was changed. A live sign-in and Gemini smoke test requires the owner's Firebase project, web config, service credential, Firestore, Gemini key, and a verified quota.
 
+For the deployment-readiness code review, the Dockerfile declares only the four public `VITE_FIREBASE_*` values as build arguments. It does not declare or reference `GEMINI_API_KEY` or `FIREBASE_SERVICE_ACCOUNT_JSON`; the Docker build copies only the frontend, backend, and public data directories, while `.dockerignore` excludes `.env` files. An image-layer scan/build could not be completed because the local Docker daemon is unavailable. The browser build output was scanned for secret-looking credential patterns and contained no matches. `render.yaml` explicitly sets `NESTWISE_ENABLE_PUBLIC_GEMINI=false`; Render's Blueprint documentation states omitted dashboard environment variables are preserved and listed variables can be modified by the Blueprint. The app calls `firestore.client(app=...)` without a database ID, which selects the Firebase Admin SDK's default database. Production GET checks to the supplied Render URL were attempted but could not connect from this environment, so deployed runtime state is not verified here.
+
 Commands:
 
 ```powershell
@@ -115,4 +117,6 @@ For live smoke testing, use only a short synthetic, redacted lease. Sign in, sub
 - [Firebase Admin ID token verification](https://firebase.google.com/docs/reference/admin/python/firebase_admin.auth)
 - [Firebase Admin SDK setup](https://firebase.google.com/docs/admin/setup)
 - [Firestore transactions](https://firebase.google.com/docs/firestore/manage-data/transactions)
+- [Firestore TTL](https://firebase.google.com/docs/firestore/ttl)
 - [Render Docker environment variables](https://render.com/docs/docker)
+- [Render Blueprint environment variables](https://render.com/docs/blueprint-spec)
