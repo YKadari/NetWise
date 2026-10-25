@@ -82,37 +82,92 @@ describe('lease extraction and explicit review', () => {
     await expect(extractLeaseText('synthetic lease')).rejects.toThrow(/Manual entry still works/)
     expect(JSON.parse(mocked.mock.calls[0][1].body)).toEqual({ text: 'synthetic lease' })
   })
-  it('requires one decision for every extracted term, supports correction, and labels unverified evidence', () => {
+  it('shows a concise summary and requires an intentional review confirmation', () => {
     const onConfirm = vi.fn()
     render(<LeaseReview draft={{ ...draft, terms: [...draft.terms, { field_id: 'security_deposit', value: null, source_excerpt: null, page_reference: null, status: 'not_found', uncertainty_note: 'Not found', evidence_verification: 'missing', review_state: 'needs_review' }] }} busy={false} error={null} onConfirm={onConfirm} onBack={vi.fn()}/>)
-    expect(screen.getByText('0 of 4 terms reviewed')).toBeInTheDocument()
-    expect(screen.getAllByText(/Evidence: unverified/)).toHaveLength(3)
-    const controls = screen.getAllByLabelText('Your review action')
-    fireEvent.change(controls[0], { target: { value: 'accept' } })
-    fireEvent.change(controls[1], { target: { value: 'correct' } })
-    fireEvent.change(screen.getByLabelText('Corrected value'), { target: { value: '1550' } })
-    fireEvent.change(controls[2], { target: { value: 'accept' } })
-    fireEvent.change(controls[3], { target: { value: 'mark_unknown' } })
-    fireEvent.click(screen.getByRole('button', { name: 'Confirm reviewed terms' }))
-    expect(onConfirm).toHaveBeenCalledWith(expect.arrayContaining([{ field_id: 'monthly_base_rent', action: 'correct', value: 1550 }, { field_id: 'security_deposit', action: 'mark_unknown' }]))
+    expect(screen.getByRole('heading', { name: "Here's what we found in your lease." })).toBeInTheDocument()
+    expect(screen.getByLabelText('Monthly rent')).toHaveValue(1450)
+    expect(screen.getByLabelText('Lease duration in months')).toHaveValue(12)
+    expect(screen.getByLabelText('Essential rental details')).toBeInTheDocument()
+    expect(screen.getByLabelText('Move-in costs')).toBeInTheDocument()
+    expect(screen.getByLabelText('Monthly costs')).toBeInTheDocument()
+    expect(screen.getByLabelText('Things worth checking')).toBeInTheDocument()
+    expect(screen.queryByText(/of 4 terms reviewed/)).not.toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'See my rental costs' })).toBeDisabled()
+    fireEvent.click(screen.getByLabelText(/I've checked the rental name/))
+    fireEvent.click(screen.getByRole('button', { name: 'See my rental costs' }))
+    expect(onConfirm).toHaveBeenCalledOnce()
+    expect(onConfirm.mock.calls[0][0]).toHaveLength(4)
+    expect(onConfirm.mock.calls[0][0]).toContainEqual({ field_id: 'security_deposit', action: 'mark_unknown' })
   })
-  it('makes essential extracted terms prominent and distinguishes ambiguous values and evidence', () => {
+  it('requires missing rent and lease duration while allowing a renter to name the home', () => {
     const terms = [
       { ...candidate('rental_label', 'Synthetic lease'), evidence_verification: 'verified_text' as const },
-      { ...candidate('monthly_base_rent', 1450), status: 'ambiguous' as const },
-      { ...candidate('lease_term_months', 12), status: 'contradictory' as const, evidence_verification: 'unverified' as const },
+      { ...candidate('monthly_base_rent', 1450), status: 'ambiguous' as const, value: null },
+      { ...candidate('lease_term_months', 12), status: 'contradictory' as const, value: null, evidence_verification: 'unverified' as const },
       { ...candidate('recurring_charges', []), status: 'not_found' as const, value: null },
     ]
     render(<LeaseReview draft={{ ...draft, terms }} busy={false} error={null} onConfirm={vi.fn()} onBack={vi.fn()}/> )
-    expect(screen.getByText('0 of 4 terms reviewed')).toBeInTheDocument()
-    expect(screen.getByRole('button', { name: 'Confirm reviewed terms' })).toBeDisabled()
-    expect(within(screen.getByLabelText('Review Advertised monthly rent')).getByText('$1,450')).toBeInTheDocument()
-    expect(screen.getByText('12 months')).toBeInTheDocument()
-    expect(screen.getByText('ambiguous')).toBeInTheDocument()
-    expect(screen.getByText('contradictory')).toBeInTheDocument()
-    expect(screen.getByText(/Evidence: verified text/)).toBeInTheDocument()
-    expect(screen.getByText(/No explicit value found/)).toBeInTheDocument()
-    expect(screen.queryByText(/\{"/)).not.toBeInTheDocument()
+    expect(screen.getByLabelText('Monthly rent')).toHaveValue(null)
+    expect(screen.getByLabelText('Lease duration in months')).toHaveValue(null)
+    expect(screen.getByLabelText(/Rental name/)).toHaveValue('Synthetic lease')
+    expect(screen.getByRole('button', { name: 'See my rental costs' })).toBeDisabled()
+    fireEvent.click(screen.getByLabelText(/I've checked the rental name/))
+    fireEvent.click(screen.getByRole('button', { name: 'See my rental costs' }))
+    expect(screen.getByRole('status')).toHaveTextContent('Enter the monthly rent')
+    fireEvent.change(screen.getByLabelText('Monthly rent'), { target: { value: '1600' } })
+    fireEvent.change(screen.getByLabelText('Lease duration in months'), { target: { value: '12' } })
+    fireEvent.click(screen.getByLabelText(/I've checked the rental name/))
+    expect(screen.getByRole('button', { name: 'See my rental costs' })).toBeEnabled()
+  })
+  it('keeps evidence on demand and labels unverified excerpts honestly', () => {
+    const verified = { ...candidate('monthly_base_rent', 1450), evidence_verification: 'verified_text' as const }
+    render(<LeaseReview draft={{ ...draft, terms: [draft.terms[0], verified, draft.terms[2]] }} busy={false} error={null} onConfirm={vi.fn()} onBack={vi.fn()}/> )
+    expect(screen.getAllByText('Where did this come from?').length).toBeGreaterThan(0)
+    expect(screen.getAllByText('Matched to your lease text.').length).toBeGreaterThan(0)
+    expect(screen.getAllByText('AI suggested this excerpt. Please verify it against your lease.').length).toBeGreaterThan(0)
+    expect(screen.queryByText(/source_excerpt|evidence_verification/)).not.toBeInTheDocument()
+  })
+  it('does not invent evidence excerpts or PDF page numbers when evidence is missing', () => {
+    const missing = { field_id: 'security_deposit' as const, value: null, source_excerpt: null, page_reference: null, status: 'not_found' as const, uncertainty_note: null, evidence_verification: 'missing' as const, review_state: 'needs_review' as const }
+    render(<LeaseReview draft={{ ...draft, terms: [...draft.terms, missing] }} busy={false} error={null} onConfirm={vi.fn()} onBack={vi.fn()}/> )
+    expect(screen.getByText('No supporting excerpt was provided.')).toBeInTheDocument()
+    expect(screen.queryByText(/Page \d+/)).not.toBeInTheDocument()
+    expect(screen.getAllByText('Not confirmed').length).toBeGreaterThan(0)
+  })
+  it('lets renters correct monthly fees without editing JSON and sends corrections separately from the draft', () => {
+    const onConfirm = vi.fn()
+    const fee = candidate('recurring_charges', [{ name: 'Internet', amount: 40, frequency: 'monthly' }])
+    const sourceDraft = { ...draft, terms: [...draft.terms, fee] }
+    const original = JSON.stringify(sourceDraft)
+    render(<LeaseReview draft={sourceDraft} busy={false} error={null} onConfirm={onConfirm} onBack={vi.fn()}/> )
+    const monthly = screen.getByLabelText('Monthly costs')
+    fireEvent.click(within(monthly).getAllByRole('button', { name: 'Edit details' })[0])
+    fireEvent.change(screen.getByLabelText(/One charge per line/), { target: { value: 'Internet | 55' } })
+    fireEvent.click(screen.getByRole('button', { name: 'Save corrected charges' }))
+    fireEvent.click(screen.getByLabelText(/I've checked the rental name/))
+    fireEvent.click(screen.getByRole('button', { name: 'See my rental costs' }))
+    expect(onConfirm.mock.calls[0][0]).toContainEqual({ field_id: 'recurring_charges', action: 'correct', value: [{ name: 'Internet', monthly_amount: 55 }] })
+    expect(JSON.stringify(sourceDraft)).toBe(original)
+  })
+  it('shows refundable and nonrefundable move-in charges separately without inventing a total', () => {
+    const fees = candidate('other_charges', [{ name: 'Pet deposit', amount: 250, refundable: true }, { name: 'Application fee', amount: 75, refundable: false }])
+    render(<LeaseReview draft={{ ...draft, terms: [...draft.terms, fees] }} busy={false} error={null} onConfirm={vi.fn()} onBack={vi.fn()}/> )
+    expect(screen.getByText(/Pet deposit — \$250 \(refundable\)/)).toBeInTheDocument()
+    expect(screen.getByText(/Application fee — \$75 \(nonrefundable\)/)).toBeInTheDocument()
+    expect(screen.getByText(/We don't add a preliminary upfront total here/)).toBeInTheDocument()
+  })
+  it('makes a possible utility duplicate an explicit clarification before confirmation', () => {
+    const charges = candidate('recurring_charges', [{ name: 'Utilities', amount: 130, frequency: 'monthly' }])
+    const utilities = candidate('utilities', { status: 'estimated', amount: 130 })
+    render(<LeaseReview draft={{ ...draft, terms: [...draft.terms, charges, utilities] }} busy={false} error={null} onConfirm={vi.fn()} onBack={vi.fn()}/> )
+    expect(screen.getByText(/Check for a duplicate/)).toBeInTheDocument()
+    fireEvent.click(screen.getByLabelText(/I've checked the rental name/))
+    expect(screen.getByRole('button', { name: 'See my rental costs' })).toBeDisabled()
+    expect(screen.getByRole('status')).toHaveTextContent(/whether utilities are already included/i)
+    fireEvent.click(screen.getByRole('button', { name: 'These are separate costs' }))
+    fireEvent.click(screen.getByLabelText(/I've checked the rental name/))
+    expect(screen.getByRole('button', { name: 'See my rental costs' })).toBeEnabled()
   })
   it('converts only confirmed offer money fields to JSON numbers for the rental API', async () => {
     const returned = { ...demoOffers[0], monthly_base_rent: '1450.00', recurring_charges: [{ name: 'Parking', monthly_amount: '150.00' }], utilities: { status: 'estimated', estimated_monthly_amount: '180.00' }, upfront: { security_deposit: { status: 'provided', amount: '2000.00' } } }
@@ -241,12 +296,17 @@ describe('financial results, stress, and comparison', () => {
     fireEvent.click(screen.getByRole('button', { name: /Analyze a lease with AI Review the details before you decide/ }))
     fireEvent.change(screen.getByLabelText('Lease provisions'), { target: { value: 'SYNTHETIC LEASE' } })
     fireEvent.click(screen.getByRole('button', { name: 'Extract lease terms' }))
-    expect(await screen.findByText('Review each extracted field')).toBeInTheDocument()
-    screen.getAllByLabelText('Your review action').forEach(control => fireEvent.change(control, { target: { value: 'accept' } }))
-    fireEvent.click(screen.getByRole('button', { name: 'Confirm reviewed terms' }))
+    expect(await screen.findByText("Here's what we found in your lease.")).toBeInTheDocument()
+    fireEvent.click(screen.getByLabelText(/I've checked the rental name/))
+    fireEvent.click(screen.getByRole('button', { name: 'See my rental costs' }))
     expect(await screen.findByLabelText('Rental evaluation results')).toBeInTheDocument()
     const confirmBody = JSON.parse(mocked.mock.calls.find(call => String(call[0]).endsWith('/lease/confirm'))![1].body)
     expect(confirmBody.decisions).toHaveLength(3)
+    expect(confirmBody.decisions).toEqual(expect.arrayContaining([
+      { field_id: 'rental_label', action: 'accept' },
+      { field_id: 'monthly_base_rent', action: 'accept' },
+      { field_id: 'lease_term_months', action: 'accept' },
+    ]))
     expect(JSON.stringify(confirmBody)).not.toContain('SYNTHETIC LEASE')
   })
   it('enters the chosen AI method directly and switches through a compact action', async () => {
@@ -349,8 +409,8 @@ describe('Batch 6A Analyze workflow', () => {
     fireEvent.click(screen.getByRole('button', { name: /Analyze a lease with AI/ }))
     fireEvent.change(screen.getByLabelText('Lease provisions'), { target: { value: 'SYNTHETIC PRESERVED TEXT' } })
     fireEvent.click(screen.getByRole('button', { name: 'Extract lease terms' }))
-    expect(await screen.findByText('Review each extracted field')).toBeInTheDocument()
-    fireEvent.click(screen.getByRole('button', { name: 'Back to document' }))
+    expect(await screen.findByText("Here's what we found in your lease.")).toBeInTheDocument()
+    fireEvent.click(screen.getByRole('button', { name: 'Back to my lease' }))
     expect(screen.getByLabelText('Lease provisions')).toHaveValue('SYNTHETIC PRESERVED TEXT')
   })
 
