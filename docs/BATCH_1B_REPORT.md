@@ -68,7 +68,7 @@ The one area more than 10 km from rail is `ZCTA:60803`: its representative point
 From the repository root with the existing virtual environment:
 
 ```powershell
-.\.venv\Scripts\python.exe -m pip install -r backend/requirements.txt
+ .\.venv\Scripts\python.exe -m pip install -r backend/requirements-dev.txt
 .\.venv\Scripts\python.exe scripts/build_final_data.py
 .\.venv\Scripts\python.exe -m pytest -q
 ```

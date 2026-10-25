@@ -14,6 +14,8 @@ from fastapi import FastAPI
 from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
+from fastapi.staticfiles import StaticFiles
+from starlette.exceptions import HTTPException as StarletteHTTPException
 from shapely.geometry import shape
 
 from backend.app.api.routes import router
@@ -25,6 +27,7 @@ from backend.app.optimization.models import HousingArea
 
 
 PUBLIC_DIR = PUBLIC_CORE.parent
+PROJECT_ROOT = Path(__file__).resolve().parents[2]
 GEO_FILES = {
     "housing": "housing_areas.geojson",
     "stations": "cta_rail_stations.geojson",
@@ -33,7 +36,8 @@ GEO_FILES = {
 
 
 def cors_origins_from_environment() -> list[str]:
-    raw = os.environ.get("NESTWISE_CORS_ORIGINS", "http://localhost:5173")
+    default = "" if os.environ.get("NESTWISE_ENV", "").strip().casefold() in {"production", "prod"} else "http://localhost:5173"
+    raw = os.environ.get("NESTWISE_CORS_ORIGINS", default)
     origins = [item.strip().rstrip("/") for item in raw.split(",") if item.strip()]
     for origin in origins:
         parsed = urlparse(origin)
@@ -72,12 +76,28 @@ def _load_geojson(directory: Path) -> dict[str, dict[str, object]]:
     return result
 
 
+class SPAStaticFiles(StaticFiles):
+    """Serve built frontend assets and client routes without masking API 404s."""
+
+    async def get_response(self, path: str, scope):
+        normalized_path = path.lstrip("/")
+        if normalized_path == "api" or normalized_path.startswith("api/"):
+            return JSONResponse(status_code=404, content={"detail": "Not Found"})
+        try:
+            return await super().get_response(path, scope)
+        except StarletteHTTPException as exc:
+            if exc.status_code == 404 and not Path(normalized_path).suffix:
+                return await super().get_response("index.html", scope)
+            raise
+
+
 def create_app(
     *,
     data_path: Path | str = PUBLIC_CORE,
     geo_dir: Path | str = PUBLIC_DIR,
     fixture_areas: Iterable[HousingArea | Mapping[str, object]] | None = None,
     cors_origins: list[str] | None = None,
+    static_dir: Path | str | None = None,
 ) -> FastAPI:
     """Create an app that loads an immutable data snapshot during lifespan startup."""
     @asynccontextmanager
@@ -109,10 +129,23 @@ def create_app(
         allow_methods=["GET", "POST"],
         allow_headers=["Content-Type"],
     )
+
+    @application.middleware("http")
+    async def prevent_api_spa_fallback(request, call_next):
+        response = await call_next(request)
+        request_path = request.url.path
+        content_type = response.headers.get("content-type", "")
+        if (request_path == "/api" or request_path.startswith("/api/")) and "text/html" in content_type:
+            return JSONResponse(status_code=404, content={"detail": "Not Found"})
+        return response
+
     application.include_router(router)
     application.include_router(rental_router)
     application.include_router(lease_router)
     application.include_router(stress_router)
+    assets = Path(static_dir) if static_dir is not None else PROJECT_ROOT / "frontend" / "dist"
+    if (assets / "index.html").is_file():
+        application.mount("/", SPAStaticFiles(directory=assets, html=True), name="frontend")
     return application
 
 

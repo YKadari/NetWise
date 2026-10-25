@@ -94,7 +94,7 @@ Performance was measured locally with `python -m scripts.benchmark_api`: FastAPI
 From the repository root:
 
 ```powershell
-.\.venv\Scripts\python.exe -m pip install -r backend/requirements.txt
+ .\.venv\Scripts\python.exe -m pip install -r backend/requirements-dev.txt
 .\.venv\Scripts\python.exe -m pytest -q
 .\.venv\Scripts\python.exe -m uvicorn backend.app.main:app --host 127.0.0.1 --port 8000 --reload
 ```

@@ -8,7 +8,7 @@ import time
 
 from fastapi import APIRouter, File, HTTPException, Request, UploadFile
 
-from backend.app.lease_extraction.config import provider_status
+from backend.app.lease_extraction.config import extraction_enabled, provider_status
 from backend.app.lease_extraction.models import ConfirmRequest, LeaseTextRequest
 from backend.app.lease_extraction.provider import extract_with_gemini
 from backend.app.lease_extraction.provider import GeminiConfigurationError, GeminiOutputError, GeminiQuotaError
@@ -44,6 +44,11 @@ def lease_status() -> dict[str, object]:
     return provider_status()
 
 
+def _require_extraction_enabled() -> None:
+    if not extraction_enabled():
+        raise HTTPException(status_code=503, detail="Live Gemini lease extraction is disabled on this service")
+
+
 def _provider_error(exc: Exception) -> HTTPException:
     if isinstance(exc, TimeoutError):
         return HTTPException(status_code=504, detail="Gemini extraction timed out; retry later")
@@ -65,6 +70,7 @@ def _provider_error(exc: Exception) -> HTTPException:
 
 @router.post("/extract-text")
 def extract_text(request: LeaseTextRequest, http_request: Request) -> dict[str, object]:
+    _require_extraction_enabled()
     _limit_extraction_requests(http_request)
     try:
         extraction = extract_with_gemini(request.text)
@@ -76,6 +82,7 @@ def extract_text(request: LeaseTextRequest, http_request: Request) -> dict[str, 
 
 @router.post("/extract-pdf")
 async def extract_pdf(http_request: Request, file: UploadFile = File(...)) -> dict[str, object]:
+    _require_extraction_enabled()
     _limit_extraction_requests(http_request)
     if not file.filename or not file.filename.casefold().endswith(".pdf") or file.content_type != "application/pdf":
         raise HTTPException(status_code=415, detail="Upload a PDF file with application/pdf media type")

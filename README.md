@@ -5,7 +5,7 @@ Batch 1A builds the Chicago core housing dataset from the HUD FY2027 SAFMR, 2020
 Keep the three Batch 1A source files in the repository root (their current location) or place them in `data/raw/`. Regenerate the local outputs with:
 
 ```powershell
-.\.venv\Scripts\python.exe -m pip install -r backend/requirements.txt
+\.venv\Scripts\python.exe -m pip install -r backend/requirements-dev.txt
 .\.venv\Scripts\python.exe scripts/build_housing_data.py
 ```
 
@@ -18,6 +18,8 @@ Build the complete four-source pipeline with:
 This regenerates Batch 1A under `data/processed/`, then writes Zillow-free public core tables and map files to `data/public/`. The Zillow-enriched final CSV remains in the Git-ignored `data/processed/` directory. The CTA data terms and publication conditions are described in [the Batch 1B report](docs/BATCH_1B_REPORT.md).
 
 The Batch 1A outputs are written to `data/processed/`. They are ignored by Git because the housing CSV includes Zillow values whose redistribution terms have not been established. See [the Batch 1A report](docs/BATCH_1A_REPORT.md) for scope, methodology, limitations, counts, and tests.
+
+For data pipeline development and tests, install the development set with `-r backend/requirements-dev.txt`. The production Docker image installs only `backend/requirements.txt`.
 
 Run tests with:
 
@@ -104,4 +106,15 @@ Batch 6A makes Analyze start with three options: AI lease review, manual rental 
 
 Batch 6C simplifies AI lease review into essential details, move-in costs, monthly costs, and terms worth checking. Renters can correct important values, inspect source evidence on demand, and confirm the displayed summary once; all original draft terms still receive a backend decision, with unclear or unshown optional terms left unknown by default. See [the Batch 6C report](docs/BATCH_6C_REPORT.md) for safeguards and verification results.
 
-Batch 6B polishes the Analyze entry and comparison actions, keeps new manual rentals blank, and makes incomplete cost terms visible as known subtotals. It does not change the financial calculation formulas or deployment configuration. See [the Batch 6B QA report](docs/BATCH_6B_REPORT.md) for verification and remaining deployment blockers.
+Batch 6B polishes the Analyze entry and comparison actions, keeps new manual rentals blank, and makes incomplete cost terms visible as known subtotals. Batch 7A prepares a single Docker-based Render Web Service with FastAPI serving the built frontend; it keeps public Gemini extraction disabled by default in production. See the [Batch 6B QA report](docs/BATCH_6B_REPORT.md) and [Batch 7A deployment guide](docs/BATCH_7A_RENDER_DEPLOYMENT.md).
+
+## Production preview on Render
+
+The root `render.yaml` defines one Docker Web Service, uses `/api/health`, and disables automatic deployment. Review the settings and choose the repository branch in Render before creating the service. Keep `NESTWISE_ENABLE_PUBLIC_GEMINI=false`; do not add a Gemini key until shared abuse controls and provider spend limits are implemented. No frontend key is required. To build and run the same image locally:
+
+```powershell
+docker build -t nestwise:batch-7a .
+docker run --rm -p 10000:10000 -e NESTWISE_ENV=production -e NESTWISE_ENABLE_PUBLIC_GEMINI=false -e NESTWISE_GEMINI_DIAGNOSTICS=0 nestwise:batch-7a
+```
+
+Open `http://127.0.0.1:10000/`. Full Render dashboard setup, environment variables, security limits, smoke checks, and rollback steps are in [the Batch 7A deployment guide](docs/BATCH_7A_RENDER_DEPLOYMENT.md). This repository preparation does not create or deploy a Render service.

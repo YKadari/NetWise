@@ -29,6 +29,22 @@ def test_controlled_fixture_startup_without_changing_public_csv():
         assert fixture_client.get("/api/health").json()["housing_area_count"] == 5
 
 
+def test_built_frontend_serves_assets_and_client_routes_without_masking_api(tmp_path):
+    (tmp_path / "index.html").write_text("<!doctype html><html>NestWise UI</html>", encoding="utf-8")
+    (tmp_path / "assets").mkdir()
+    (tmp_path / "assets" / "app.js").write_text("console.log('ui')", encoding="utf-8")
+    application = create_app(fixture_areas=AREAS, geo_dir=PUBLIC_DIR, static_dir=tmp_path)
+    with TestClient(application) as static_client:
+        assert "NestWise UI" in static_client.get("/").text
+        assert "NestWise UI" in static_client.get("/analyze/review").text
+        asset = static_client.get("/assets/app.js")
+        assert asset.status_code == 200 and "javascript" in asset.headers["content-type"]
+        assert static_client.get("/assets/missing.js").status_code == 404
+        api_404 = static_client.get("/api/not-a-route")
+        assert api_404.status_code == 404, api_404.text
+        assert api_404.json() == {"detail": "Not Found"}
+
+
 def test_missing_or_corrupt_public_data_fail_startup(tmp_path):
     with pytest.raises(FileNotFoundError):
         with TestClient(create_app(data_path=tmp_path / "absent.csv", geo_dir=PUBLIC_DIR)):

@@ -66,7 +66,7 @@ HUD SAFMR values are program payment-standard benchmarks, not guaranteed availab
 From the repository root, install the declared packages and run:
 
 ```powershell
-.\.venv\Scripts\python.exe -m pip install -r backend/requirements.txt
+ .\.venv\Scripts\python.exe -m pip install -r backend/requirements-dev.txt
 .\.venv\Scripts\python.exe scripts/build_housing_data.py
 .\.venv\Scripts\python.exe -m pytest -q
 ```

@@ -1,0 +1,16 @@
+services:
+  - type: web
+    name: nestwise
+    runtime: docker
+    plan: free
+    dockerfilePath: ./Dockerfile
+    dockerContext: .
+    healthCheckPath: /api/health
+    autoDeploy: false
+    envVars:
+      - key: NESTWISE_ENV
+        value: production
+      - key: NESTWISE_ENABLE_PUBLIC_GEMINI
+        value: "false"
+      - key: NESTWISE_GEMINI_DIAGNOSTICS
+        value: "0"

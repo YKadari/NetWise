@@ -24,6 +24,22 @@ def test_matching_and_nonmatching_text_evidence_are_distinguished():
     assert mismatch.terms[0].evidence_verification == "unverified"
 
 
+def test_production_gemini_gate_defaults_off_without_leaking_configuration(monkeypatch):
+    monkeypatch.setenv("NESTWISE_ENV", "production")
+    monkeypatch.delenv("NESTWISE_ENABLE_PUBLIC_GEMINI", raising=False)
+    monkeypatch.setenv("GEMINI_API_KEY", "synthetic-test-secret")
+    with TestClient(app) as client:
+        status = client.get("/api/lease/status")
+        assert status.status_code == 200
+        assert status.json()["configured"] is True
+        assert status.json()["service_ready"] is False
+        assert "synthetic-test-secret" not in status.text
+        response = client.post("/api/lease/extract-text", json={"text": "Synthetic test lease."})
+        assert response.status_code == 503
+        assert response.json()["detail"] == "Live Gemini lease extraction is disabled on this service"
+        assert "synthetic-test-secret" not in response.text
+
+
 def test_pdf_page_is_only_verified_when_excerpt_matches_one_page():
     extraction = LeaseExtraction(terms=[candidate("monthly_base_rent", 1500)])
     matched = verify_pdf_evidence(extraction, ["Cover", "The monthly rent is $1,500."])
