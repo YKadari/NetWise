@@ -21,7 +21,8 @@ async function rentalRequest<T>(path: string, options: RequestInit = {}): Promis
       if (typeof payload.detail === 'string') detail = payload.detail
       else if (Array.isArray(payload.detail)) detail = payload.detail.slice(0, 3).map(item => `${item.location?.join('.') || 'Request'}: ${item.message || 'invalid value'}`).join('; ')
     } catch { /* A proxy may return a non-JSON error page. */ }
-    throw new ApiError(messages[response.status] || detail || (response.status === 422 ? 'Check the entered terms and try again.' : `Request failed (${response.status}).`), response.status)
+    const safeDetail = response.status === 422 ? 'Some reviewed terms could not be added to the rental. Check the values and try again.' : detail
+    throw new ApiError(messages[response.status] || safeDetail || `Request failed (${response.status}).`, response.status)
   }
   try { return await response.json() as T }
   catch { throw new ApiError('The server returned an unreadable response.') }
@@ -51,7 +52,44 @@ export async function extractLeasePdf(file: File): Promise<LeaseDraft> {
 }
 
 export async function confirmLease(draft: LeaseDraft, decisions: ReviewDecision[]): Promise<LeaseConfirmation> {
-  const result = await rentalRequest<LeaseConfirmation>('/lease/confirm', json({ draft, decisions }))
+  const terms = new Map(draft.terms.map(term => [term.field_id, term.value]))
+  const reviewedDecisions = decisions.map(decision => {
+    if (decision.action !== 'accept') return decision
+    const candidate = terms.get(decision.field_id)
+    if (typeof candidate === 'boolean' && (decision.field_id === 'first_month_rent_due_upfront' || decision.field_id === 'last_month_rent_due_upfront')) {
+      return { ...decision, value: candidate ? 'yes' : 'no' }
+    }
+    if (decision.field_id === 'recurring_charges' && Array.isArray(candidate)) {
+      const charges = candidate.map((entry: unknown) => {
+        if (!entry || typeof entry !== 'object' || Array.isArray(entry)) throw new ApiError('Review recurring fees and correct any amounts that are not clearly monthly.')
+        const item = entry as Record<string, unknown>
+        if (typeof item.name === 'string' && typeof item.monthly_amount === 'number' && Number.isFinite(item.monthly_amount)) {
+          return { name: item.name, monthly_amount: item.monthly_amount }
+        }
+        if (typeof item.name === 'string' && item.frequency === 'monthly' && typeof item.amount === 'number' && Number.isFinite(item.amount)) {
+          return { name: item.name, monthly_amount: item.amount }
+        }
+        throw new ApiError('Review recurring fees and correct any amounts that are not clearly monthly.')
+      })
+      return { ...decision, value: charges }
+    }
+    if (decision.field_id === 'utilities' && candidate && typeof candidate === 'object') {
+      const utility = candidate as Record<string, unknown>
+      if (utility.status === 'estimated') {
+        const amount = utility.amount ?? utility.estimated_monthly_amount
+        if (typeof amount === 'number' && Number.isFinite(amount)) return { ...decision, value: { status: 'estimated', amount, source_description: utility.source_description ?? utility.name } }
+      }
+      if (utility.status === 'included_in_rent') return { ...decision, value: { status: 'included_in_rent' } }
+      if (Array.isArray(candidate) && candidate.length === 1 && candidate[0] && typeof candidate[0] === 'object') {
+        const item = candidate[0] as Record<string, unknown>
+        if (item.frequency === 'monthly' && typeof item.amount === 'number' && Number.isFinite(item.amount)) {
+          return { ...decision, value: { status: 'estimated', amount: item.amount, source_description: item.name } }
+        }
+      }
+    }
+    return decision
+  })
+  const result = await rentalRequest<LeaseConfirmation>('/lease/confirm', json({ draft, decisions: reviewedDecisions }))
   if (!result.confirmed_offer?.rental_label || !Array.isArray(result.review_history)) throw new ApiError('The confirmed lease response is incomplete.')
   // Pydantic's model_dump(mode='json') sends Decimal offer amounts as strings.
   // Batch 4A intentionally accepts only JSON numbers on its request boundary.

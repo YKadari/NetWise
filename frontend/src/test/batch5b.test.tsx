@@ -10,7 +10,7 @@ import { RentalStressPanel } from '../components/RentalStressPanel'
 import { RentalComparison } from '../components/RentalComparison'
 import { RentalWorkspace } from '../components/RentalWorkspace'
 import { confirmLease, extractLeaseText, evaluateRental } from '../lib/rentalApi'
-import { demoOffers, manualToOffer, blankManual, profileToRequest, blankProfile } from '../lib/rentalForms'
+import { demoOffers, manualToOffer, blankManual, profileToRequest, blankProfile, money, offerToManual } from '../lib/rentalForms'
 import type { LeaseDraft, RentalEvaluation, StressScenario } from '../types/rental'
 
 afterEach(() => { cleanup(); vi.unstubAllGlobals() })
@@ -53,9 +53,9 @@ describe('Batch 5B navigation and manual entry', () => {
   it('submits a valid manual offer without Gemini', () => {
     const onEvaluate = vi.fn()
     render(<RentalInput busy={false} onEvaluate={onEvaluate}/>)
-    fireEvent.change(screen.getByLabelText('Rental label'), { target: { value: 'Synthetic studio' } })
-    fireEvent.change(screen.getByLabelText('Advertised base rent / month'), { target: { value: '1200' } })
-    fireEvent.click(screen.getByRole('button', { name: 'Evaluate rental offer' }))
+    fireEvent.change(screen.getByLabelText('Rental name'), { target: { value: 'Synthetic studio' } })
+    fireEvent.change(screen.getByLabelText('Advertised monthly rent'), { target: { value: '1200' } })
+    fireEvent.click(screen.getByRole('button', { name: 'Calculate my rental costs' }))
     expect(onEvaluate).toHaveBeenCalledWith(expect.objectContaining({ rental_label: 'Synthetic studio', monthly_base_rent: 1200 }))
   })
   it('loads the two existing synthetic offers with different charges and move-in cash', () => {
@@ -85,7 +85,7 @@ describe('lease extraction and explicit review', () => {
   it('requires one decision for every extracted term, supports correction, and labels unverified evidence', () => {
     const onConfirm = vi.fn()
     render(<LeaseReview draft={{ ...draft, terms: [...draft.terms, { field_id: 'security_deposit', value: null, source_excerpt: null, page_reference: null, status: 'not_found', uncertainty_note: 'Not found', evidence_verification: 'missing', review_state: 'needs_review' }] }} busy={false} error={null} onConfirm={onConfirm} onBack={vi.fn()}/>)
-    expect(screen.getByText('4 of 4 fields still need a decision')).toBeInTheDocument()
+    expect(screen.getByText('0 of 4 terms reviewed')).toBeInTheDocument()
     expect(screen.getAllByText(/Evidence: unverified/)).toHaveLength(3)
     const controls = screen.getAllByLabelText('Your review action')
     fireEvent.change(controls[0], { target: { value: 'accept' } })
@@ -95,6 +95,24 @@ describe('lease extraction and explicit review', () => {
     fireEvent.change(controls[3], { target: { value: 'mark_unknown' } })
     fireEvent.click(screen.getByRole('button', { name: 'Confirm reviewed terms' }))
     expect(onConfirm).toHaveBeenCalledWith(expect.arrayContaining([{ field_id: 'monthly_base_rent', action: 'correct', value: 1550 }, { field_id: 'security_deposit', action: 'mark_unknown' }]))
+  })
+  it('makes essential extracted terms prominent and distinguishes ambiguous values and evidence', () => {
+    const terms = [
+      { ...candidate('rental_label', 'Synthetic lease'), evidence_verification: 'verified_text' as const },
+      { ...candidate('monthly_base_rent', 1450), status: 'ambiguous' as const },
+      { ...candidate('lease_term_months', 12), status: 'contradictory' as const, evidence_verification: 'unverified' as const },
+      { ...candidate('recurring_charges', []), status: 'not_found' as const, value: null },
+    ]
+    render(<LeaseReview draft={{ ...draft, terms }} busy={false} error={null} onConfirm={vi.fn()} onBack={vi.fn()}/> )
+    expect(screen.getByText('0 of 4 terms reviewed')).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'Confirm reviewed terms' })).toBeDisabled()
+    expect(within(screen.getByLabelText('Review Advertised monthly rent')).getByText('$1,450')).toBeInTheDocument()
+    expect(screen.getByText('12 months')).toBeInTheDocument()
+    expect(screen.getByText('ambiguous')).toBeInTheDocument()
+    expect(screen.getByText('contradictory')).toBeInTheDocument()
+    expect(screen.getByText(/Evidence: verified text/)).toBeInTheDocument()
+    expect(screen.getByText(/No explicit value found/)).toBeInTheDocument()
+    expect(screen.queryByText(/\{"/)).not.toBeInTheDocument()
   })
   it('converts only confirmed offer money fields to JSON numbers for the rental API', async () => {
     const returned = { ...demoOffers[0], monthly_base_rent: '1450.00', recurring_charges: [{ name: 'Parking', monthly_amount: '150.00' }], utilities: { status: 'estimated', estimated_monthly_amount: '180.00' }, upfront: { security_deposit: { status: 'provided', amount: '2000.00' } } }
@@ -109,26 +127,75 @@ describe('lease extraction and explicit review', () => {
     expect(request.offer.utilities.estimated_monthly_amount).toBe(180)
     expect(request.offer.monthly_base_rent).toBe(1450)
   })
+  it('normalizes accepted Gemini term shapes for the existing confirmation contract without changing the draft', async () => {
+    const terms = [
+      candidate('recurring_charges', [{ name: 'Internet', amount: 40, frequency: 'monthly' }]),
+      candidate('utilities', [{ name: 'Utilities', amount: 130, frequency: 'monthly' }]),
+      candidate('first_month_rent_due_upfront', true),
+      candidate('last_month_rent_due_upfront', false),
+    ]
+    const extracted: LeaseDraft = { ...draft, terms }
+    const before = JSON.stringify(extracted)
+    const mocked = vi.fn().mockResolvedValue(jsonResponse({ confirmed_offer: demoOffers[0], review_history: [], confirmed_clauses: {} }))
+    vi.stubGlobal('fetch', mocked)
+    await confirmLease(extracted, terms.map(term => ({ field_id: term.field_id, action: 'accept' as const })))
+    const body = JSON.parse((mocked.mock.calls[0][1] as RequestInit).body as string)
+    expect(body.draft).toEqual(extracted)
+    expect(body.decisions).toEqual([
+      { field_id: 'recurring_charges', action: 'accept', value: [{ name: 'Internet', monthly_amount: 40 }] },
+      { field_id: 'utilities', action: 'accept', value: { status: 'estimated', amount: 130, source_description: 'Utilities' } },
+      { field_id: 'first_month_rent_due_upfront', action: 'accept', value: 'yes' },
+      { field_id: 'last_month_rent_due_upfront', action: 'accept', value: 'no' },
+    ])
+    expect(JSON.stringify(extracted)).toBe(before)
+  })
+  it('does not echo raw confirmation validation details to the frontend', async () => {
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(jsonResponse({ detail: 'invalid lease contents and secret value' }, 422)))
+    let message = ''
+    try { await confirmLease(draft, draft.terms.map(term => ({ field_id: term.field_id, action: 'accept' }))) }
+    catch (cause) { message = cause instanceof Error ? cause.message : String(cause) }
+    expect(message).toContain('Some reviewed terms could not be added')
+    expect(message).not.toContain('secret value')
+  })
 })
 
 describe('financial results, stress, and comparison', () => {
   it('labels incomplete cost figures as known subtotals', () => {
-    render(<RentalResults offer={demoOffers[0]} result={{ ...evaluation, monthly_costs: { ...evaluation.monthly_costs, monthly_costs_complete: false }, unknown_cost_categories: ['utilities'] }} onSave={vi.fn()} savedSlot={null}/>)
+    const incompleteOffer = { ...demoOffers[0], recurring_charges_status: 'unknown' as const, utilities: { status: 'unknown' as const }, upfront: { ...demoOffers[0].upfront, other_charges_status: 'unknown' as const } }
+    render(<RentalResults offer={incompleteOffer} result={{ ...evaluation, monthly_costs: { ...evaluation.monthly_costs, monthly_costs_complete: false }, unknown_cost_categories: ['utilities', 'recurring_charges', 'other_upfront_charges'] }} onSave={vi.fn()} savedSlot={null}/>)
     expect(screen.getByText('Known monthly subtotal')).toBeInTheDocument()
-    expect(screen.getByText(/Unknown categories: utilities/)).toBeInTheDocument()
-    expect(screen.getByText('Refundable cash held')).toBeInTheDocument()
+    expect(screen.getByText(/Some rental costs have not been confirmed/)).toHaveTextContent('utilities')
+    expect(screen.getByText(/Listed monthly fees: Not confirmed\. Utilities: Not confirmed\./)).toBeInTheDocument()
+    expect(screen.getByText(/Known-term personal share/)).toBeInTheDocument()
+    expect(screen.getByText('Refundable deposits')).toBeInTheDocument()
   })
   it('submits utility and early-departure scenarios with explicit assumptions', () => {
     const onRun = vi.fn<(scenario: StressScenario) => void>()
     render(<RentalStressPanel offer={demoOffers[0]} busy={false} error={null} result={null} onRun={onRun}/>)
+    fireEvent.click(screen.getByRole('button', { name: 'Utilities become more expensive' }))
     fireEvent.click(screen.getByRole('button', { name: 'Run scenario' }))
     expect(onRun).toHaveBeenCalledWith({ type: 'utility_increase', additional_monthly_amount: 100, first_affected_month: 1, last_affected_month: 12 })
-    fireEvent.change(screen.getByLabelText('Scenario'), { target: { value: 'early_departure' } })
+    fireEvent.click(screen.getByRole('button', { name: 'You need to leave early' }))
     fireEvent.change(screen.getByLabelText('Treatment'), { target: { value: 'hypothetical_settlement' } })
     fireEvent.change(screen.getByLabelText('Hypothetical fee'), { target: { value: '2000' } })
     fireEvent.change(screen.getByLabelText('Assumption or source note'), { target: { value: 'Synthetic only' } })
     fireEvent.click(screen.getByRole('button', { name: 'Run scenario' }))
     expect(onRun).toHaveBeenLastCalledWith(expect.objectContaining({ type: 'early_departure', departure_month: 8, treatment: 'hypothetical_settlement', termination_fee: 2000, remaining_rent_treatment: 'unknown' }))
+  })
+  it('does not present unknown early-departure consequences or future rent as zero', () => {
+    const result = {
+      scenario_type: 'early_departure' as const,
+      assumptions: { treatment: 'unknown_consequences', remaining_rent_treatment: 'unknown' },
+      affected_months: [9, 10, 11, 12], baseline: evaluation,
+      stressed: { month_by_month: [], financial_resilience: {}, known_departure_cash_impact: 0, specified_remaining_rent: 0, prepaid_rent_credit_applied: 0, continuing_rent_cash_due_after_prepaid_credit: 0 },
+      summary: { unknown_cost_categories: ['early_departure_consequences', 'remaining_rent_obligation'] },
+      warnings: [], explanation: 'This is an explicit settlement scenario.', result_is_hypothetical_not_a_forecast: true,
+    }
+    render(<RentalStressPanel offer={demoOffers[0]} busy={false} error={null} result={result} onRun={vi.fn()}/> )
+    expect(screen.getByText(/No legal or contractual outcome has been entered/)).toBeInTheDocument()
+    expect(screen.getByText('Future rent and legal consequences').parentElement).toHaveTextContent('Unknown')
+    expect(screen.getByText(/Continuing rent cash due is unknown/)).toBeInTheDocument()
+    expect(screen.queryByText(/Continuing rent cash due after credit: \$0/)).not.toBeInTheDocument()
   })
   it('compares two saved offers using the API response and flags unequal terms', async () => {
     const result = { left: evaluation, right: { ...evaluation, rental_label: 'Synthetic B' }, differences: { left_minus_right: { base_rent_per_month: -150 }, lease_terms_differ: true, total_period_costs_directly_comparable: false, unknown_cost_categories: { left: [], right: [] } }, comparison_notes: ['Lease durations differ.'], method: 'Shared profile.' }
@@ -137,6 +204,18 @@ describe('financial results, stress, and comparison', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Compare the offers' }))
     expect(await screen.findByText(/Lease lengths differ/)).toBeInTheDocument()
     expect(within(screen.getByLabelText('Rental comparison results')).getByText('Measured differences')).toBeInTheDocument()
+  })
+  it('shows one clear comparison action when both saved slots exist and labels replacement explicitly', () => {
+    const onCompare = vi.fn()
+    const onSave = vi.fn()
+    render(<RentalResults offer={demoOffers[0]} result={evaluation} onSave={onSave} savedSlot={null} hasSavedA hasSavedB onCompare={onCompare}/> )
+    expect(screen.getByRole('button', { name: 'View comparison' })).toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: 'Compare rentals' })).not.toBeInTheDocument()
+    fireEvent.click(screen.getByText('Save or replace a comparison offer'))
+    expect(screen.getByRole('button', { name: 'Replace Rental A' })).toBeInTheDocument()
+    fireEvent.click(screen.getByRole('button', { name: 'View comparison' }))
+    expect(onCompare).toHaveBeenCalledOnce()
+    expect(onSave).not.toHaveBeenCalled()
   })
   it('does not show an old comparison after either selected offer changes', async () => {
     let resolveResponse: ((value: ReturnType<typeof jsonResponse>) => void) | undefined
@@ -159,7 +238,7 @@ describe('financial results, stress, and comparison', () => {
     })
     vi.stubGlobal('fetch', mocked)
     render(<RentalWorkspace view="analyze" onNavigate={vi.fn()}/>)
-    fireEvent.click(screen.getByRole('button', { name: /Paste lease text Extract then review/ }))
+    fireEvent.click(screen.getByRole('button', { name: /Analyze a lease with AI Review the details before you decide/ }))
     fireEvent.change(screen.getByLabelText('Lease provisions'), { target: { value: 'SYNTHETIC LEASE' } })
     fireEvent.click(screen.getByRole('button', { name: 'Extract lease terms' }))
     expect(await screen.findByText('Review each extracted field')).toBeInTheDocument()
@@ -169,5 +248,204 @@ describe('financial results, stress, and comparison', () => {
     const confirmBody = JSON.parse(mocked.mock.calls.find(call => String(call[0]).endsWith('/lease/confirm'))![1].body)
     expect(confirmBody.decisions).toHaveLength(3)
     expect(JSON.stringify(confirmBody)).not.toContain('SYNTHETIC LEASE')
+  })
+  it('enters the chosen AI method directly and switches through a compact action', async () => {
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(jsonResponse({ configured: false, service_ready: false, model: 'synthetic-test' })))
+    render(<RentalWorkspace view="analyze" onNavigate={vi.fn()}/> )
+    fireEvent.click(screen.getByRole('button', { name: /Analyze a lease with AI/ }))
+    expect(await screen.findByLabelText('Lease document input')).toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: /No lease needed/ })).not.toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'Switch to manual entry' })).toBeInTheDocument()
+    fireEvent.click(screen.getByRole('button', { name: 'Switch to manual entry' }))
+    expect(screen.getByLabelText('Manual rental details')).toBeInTheDocument()
+    expect(screen.queryByLabelText('Lease provisions')).not.toBeInTheDocument()
+  })
+})
+
+describe('Batch 6A Analyze workflow', () => {
+  it('shows three starting choices and keeps finances out of the welcome screen', () => {
+    render(<RentalWorkspace view="analyze" onNavigate={vi.fn()}/> )
+    expect(screen.getByRole('heading', { name: 'Understand the real cost of your next rental.' })).toBeInTheDocument()
+    const aiChoice = screen.getByRole('button', { name: /Analyze a lease with AI/ })
+    expect(aiChoice).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: /Enter rental details/ })).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: /Try a sample rental/ })).toBeInTheDocument()
+    expect(screen.queryByLabelText('Financial profile')).not.toBeInTheDocument()
+    expect(screen.queryByLabelText('Manual rental details')).not.toBeInTheDocument()
+    aiChoice.focus()
+    expect(document.activeElement).toBe(aiChoice)
+  })
+
+  it('uses one click to reach a labeled synthetic result and comparison actions', async () => {
+    const mocked = vi.fn().mockImplementation((url: string) => {
+      if (url.endsWith('/lease/status')) return Promise.resolve(jsonResponse({ configured: false, service_ready: false, model: 'synthetic-test' }))
+      if (url.endsWith('/rental/evaluate')) return Promise.resolve(jsonResponse(evaluation))
+      throw new Error(`Unexpected API path: ${url}`)
+    })
+    vi.stubGlobal('fetch', mocked)
+    render(<RentalWorkspace view="analyze" onNavigate={vi.fn()}/> )
+    fireEvent.click(screen.getByRole('button', { name: /Try a sample rental/ }))
+    expect(await screen.findByLabelText('Rental evaluation results')).toBeInTheDocument()
+    expect(screen.getByText(/Synthetic Scenario A/)).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'Save as Rental A to compare' })).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'Compare sample rentals' })).toBeInTheDocument()
+    expect(screen.getByRole('heading', { name: 'Can I comfortably afford this rental?' })).toBeInTheDocument()
+  })
+
+  it('reveals optional finances, marks old figures stale, and recalculates without losing the rental', async () => {
+    const personalized = { ...evaluation, financial_profile: { known_monthly_cash_remaining_after_housing_and_savings: 777, initial_savings_remaining_after_known_move_in_cash: 2400, affordability_status: 'within_budget', emergency_reserve_preserved: true } }
+    const mocked = vi.fn().mockImplementation((url: string) => {
+      if (url.endsWith('/lease/status')) return Promise.resolve(jsonResponse({ configured: false, service_ready: false, model: 'synthetic-test' }))
+      if (url.endsWith('/rental/evaluate')) return Promise.resolve(jsonResponse(mocked.mock.calls.filter(call => String(call[0]).endsWith('/rental/evaluate')).length > 1 ? personalized : evaluation))
+      throw new Error(`Unexpected API path: ${url}`)
+    })
+    vi.stubGlobal('fetch', mocked)
+    render(<RentalWorkspace view="analyze" onNavigate={vi.fn()}/> )
+    fireEvent.click(screen.getByRole('button', { name: /Try a sample rental/ }))
+    await screen.findByLabelText('Rental evaluation results')
+    fireEvent.click(screen.getByRole('button', { name: 'Add my finances' }))
+    fireEvent.change(screen.getByLabelText('Monthly take-home income'), { target: { value: '4500' } })
+    fireEvent.change(screen.getByLabelText('Available savings'), { target: { value: '8000' } })
+    fireEvent.change(screen.getByLabelText('Essential nonhousing expenses / month'), { target: { value: '1800' } })
+    expect(screen.getByText(/financial profile changed/i)).toBeInTheDocument()
+    expect(screen.queryByText(/Monthly cash left after expenses and savings target/)).not.toBeInTheDocument()
+    fireEvent.click(screen.getByRole('button', { name: 'Update my finances' }))
+    expect(await screen.findByText(/Monthly cash left: \$777/)).toBeInTheDocument()
+    expect(screen.getByText(/Synthetic Scenario A/)).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'Edit finances' })).toBeInTheDocument()
+    fireEvent.click(screen.getByRole('button', { name: 'Edit finances' }))
+    expect(screen.getByText(/Monthly take-home pay after taxes and payroll deductions/)).toBeInTheDocument()
+    expect(screen.getByText(/not a guaranteed payment or reduction in lease responsibility/)).toBeInTheDocument()
+  })
+
+  it('keeps advanced manual fields collapsed until requested', () => {
+    render(<RentalInput busy={false} onEvaluate={vi.fn()}/> )
+    expect(screen.getByLabelText('Advertised monthly rent')).toBeInTheDocument()
+    expect(screen.queryByLabelText('Recurring fee list completeness')).not.toBeVisible()
+    fireEvent.click(screen.getByText(/Other monthly costs/))
+    expect(screen.getByLabelText('Recurring fee list completeness')).toBeVisible()
+    expect(screen.getByText(/Additional terms/)).toBeInTheDocument()
+  })
+
+  it('collapses cash flow by default and switches from chart to full table', () => {
+    render(<RentalResults offer={demoOffers[0]} result={evaluation} onSave={vi.fn()} savedSlot={null}/> )
+    const disclosure = screen.getByText(/See your costs month by month/).closest('details')!
+    expect(disclosure).not.toHaveAttribute('open')
+    fireEvent.click(screen.getByText(/See your costs month by month/))
+    expect(screen.getByRole('img', { name: /Monthly household housing costs shown as bars/ })).toBeInTheDocument()
+    fireEvent.click(screen.getByRole('button', { name: 'Detailed table' }))
+    expect(screen.getByRole('table', { name: 'Lease month cash flow' })).toBeInTheDocument()
+    expect(screen.getByText('Prepaid rent allocated')).toBeInTheDocument()
+  })
+
+  it('preserves pasted lease text when moving back from review to document entry', async () => {
+    const mocked = vi.fn().mockImplementation((url: string) => {
+      if (url.endsWith('/lease/status')) return Promise.resolve(jsonResponse({ configured: true, service_ready: true, model: 'synthetic-test' }))
+      if (url.endsWith('/lease/extract-text')) return Promise.resolve(jsonResponse(draft))
+      throw new Error(`Unexpected API path: ${url}`)
+    })
+    vi.stubGlobal('fetch', mocked)
+    render(<RentalWorkspace view="analyze" onNavigate={vi.fn()}/> )
+    fireEvent.click(screen.getByRole('button', { name: /Analyze a lease with AI/ }))
+    fireEvent.change(screen.getByLabelText('Lease provisions'), { target: { value: 'SYNTHETIC PRESERVED TEXT' } })
+    fireEvent.click(screen.getByRole('button', { name: 'Extract lease terms' }))
+    expect(await screen.findByText('Review each extracted field')).toBeInTheDocument()
+    fireEvent.click(screen.getByRole('button', { name: 'Back to document' }))
+    expect(screen.getByLabelText('Lease provisions')).toHaveValue('SYNTHETIC PRESERVED TEXT')
+  })
+
+  it('starts a blank manual rental after the sample while preserving the explicitly saved comparison offer', async () => {
+    const mocked = vi.fn().mockImplementation((url: string) => {
+      if (url.endsWith('/lease/status')) return Promise.resolve(jsonResponse({ configured: false, service_ready: false, model: 'synthetic-test' }))
+      if (url.endsWith('/rental/evaluate')) return Promise.resolve(jsonResponse(evaluation))
+      throw new Error(`Unexpected API path: ${url}`)
+    })
+    vi.stubGlobal('fetch', mocked)
+    const onNavigate = vi.fn()
+    const view = (selected: ProductView) => <RentalWorkspace view={selected} onNavigate={onNavigate}/>
+    const rendered = render(view('analyze'))
+    fireEvent.click(screen.getByRole('button', { name: /Try a sample rental/ }))
+    expect(await screen.findByLabelText('Rental evaluation results')).toBeInTheDocument()
+    fireEvent.click(screen.getByRole('button', { name: 'Save as Rental A to compare' }))
+    expect(screen.getByRole('status')).toHaveTextContent('Saved to Rental A')
+    fireEvent.click(screen.getByRole('button', { name: 'Start another' }))
+    fireEvent.click(screen.getByRole('button', { name: /Enter rental details/ }))
+    expect(screen.getByLabelText('Rental name')).toHaveValue('')
+    expect(screen.getByLabelText('Advertised monthly rent')).toHaveValue(null)
+    expect(screen.getByLabelText('Lease length (months; default 12)')).toHaveValue(12)
+    expect(screen.getByLabelText('Security deposit')).toHaveValue('unknown')
+    expect(screen.getByLabelText('Utilities')).toHaveValue('unknown')
+    rendered.rerender(view('compare'))
+    expect(screen.getByRole('heading', { name: 'Synthetic Scenario A' })).toBeInTheDocument()
+    expect(screen.getByRole('heading', { name: 'No offer saved yet' })).toBeInTheDocument()
+  })
+
+  it('edits an existing offer with its original values intact', () => {
+    render(<RentalInput seed={demoOffers[0]} busy={false} onEvaluate={vi.fn()}/> )
+    expect(screen.getByLabelText('Rental name')).toHaveValue('Synthetic Scenario A')
+    expect(screen.getByLabelText('Advertised monthly rent')).toHaveValue(1450)
+    expect(screen.getByLabelText('Security deposit')).toHaveValue('provided')
+    fireEvent.click(screen.getByText(/Other monthly costs/))
+    expect(screen.getByLabelText('Recurring fee 1 name')).toHaveValue('Parking')
+    fireEvent.click(screen.getByText(/Additional terms/))
+    expect(screen.getByLabelText('Other upfront charge list completeness')).toHaveValue('complete')
+  })
+
+  it('starts manual input directly and offers only a compact method switch', () => {
+    render(<RentalWorkspace view="analyze" onNavigate={vi.fn()}/> )
+    fireEvent.click(screen.getByRole('button', { name: /Enter rental details/ }))
+    expect(screen.getByLabelText('Manual rental details')).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'Analyze a lease instead' })).toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: /No lease needed/ })).not.toBeInTheDocument()
+  })
+})
+
+describe('manual completeness and currency', () => {
+  it('keeps blank charges unknown until the user confirms each complete list', () => {
+    const initial = blankManual()
+    expect(initial.label).toBe('')
+    expect(initial.rent).toBe('')
+    expect(initial.recurring).toEqual([])
+    expect(initial.concessions).toEqual([])
+    const offer = manualToOffer({ ...initial, label: 'New rental', rent: '1500' })
+    expect(offer.recurring_charges_status).toBe('unknown')
+    expect(offer.utilities).toEqual({ status: 'unknown' })
+    expect(offer.upfront?.security_deposit).toEqual({ status: 'unknown' })
+    expect(offer.upfront?.nonrefundable_fees_status).toBe('unknown')
+    expect(offer.upfront?.other_charges_status).toBe('unknown')
+    expect(offer.upfront?.holding_deposit_status).toBe('unknown')
+    expect(offer.upfront?.last_month_rent_due_upfront).toBe('unknown')
+    const confirmedNone = manualToOffer({ ...initial, label: 'Reviewed rental', rent: '1500', depositStatus: 'none', utilityStatus: 'included_in_rent', recurringStatus: 'complete', feeStatus: 'complete', otherChargeStatus: 'complete', holdingStatus: 'none', firstPrepaid: 'no', lastPrepaid: 'no' })
+    expect(confirmedNone.recurring_charges).toEqual([])
+    expect(confirmedNone.recurring_charges_status).toBe('complete')
+    expect(confirmedNone.utilities?.status).toBe('included_in_rent')
+    expect(confirmedNone.upfront?.security_deposit).toEqual({ status: 'none' })
+    expect(confirmedNone.upfront?.other_charges_status).toBe('complete')
+    expect(offerToManual(demoOffers[0]).deposit).toBe('2000')
+  })
+
+  it('formats whole, fractional, zero, negative, large, and missing currency values safely', () => {
+    expect(money(1830)).toBe('$1,830')
+    expect(money(1830.75)).toBe('$1,830.75')
+    expect(money(0)).toBe('$0')
+    expect(money(-12)).toBe('-$12')
+    expect(money(1234567890)).toBe('$1,234,567,890')
+    expect(money(null)).toBe('Unknown')
+    expect(money(undefined)).toBe('Unknown')
+    expect(money(Number.NaN)).toBe('Unknown')
+    expect(money(1830, true)).toBe('$1,830.00')
+  })
+
+  it('renders unknown and confirmed-none as different, nonnumeric states', () => {
+    const unknown = manualToOffer({ ...blankManual(), label: 'Unknown fees', rent: '1300' })
+    const none = manualToOffer({ ...blankManual(), label: 'No monthly fees', rent: '1300', recurringStatus: 'complete', utilityStatus: 'included_in_rent', depositStatus: 'none', feeStatus: 'complete', otherChargeStatus: 'complete', holdingStatus: 'none' })
+    expect(unknown.recurring_charges_status).toBe('unknown')
+    expect(unknown.utilities?.status).toBe('unknown')
+    expect(unknown.upfront?.security_deposit?.status).toBe('unknown')
+    expect(none.recurring_charges).toEqual([])
+    expect(none.recurring_charges_status).toBe('complete')
+    expect(none.utilities?.status).toBe('included_in_rent')
+    expect(none.upfront?.security_deposit?.status).toBe('none')
+    expect(none.upfront?.other_charges_status).toBe('complete')
   })
 })

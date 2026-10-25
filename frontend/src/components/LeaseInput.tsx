@@ -1,4 +1,4 @@
-import { useState, type FormEvent } from 'react'
+import { useEffect, useState, type FormEvent } from 'react'
 import { syntheticLeaseText } from '../lib/rentalForms'
 import type { LeaseServiceStatus } from '../types/rental'
 
@@ -9,6 +9,7 @@ export function LeaseInput({ initialMethod = 'text', status, busy, error, onText
   const [file, setFile] = useState<File | null>(null)
   const [method, setMethod] = useState<'text' | 'pdf'>(initialMethod)
   const [localError, setLocalError] = useState<string | null>(null)
+  useEffect(() => { setMethod(initialMethod) }, [initialMethod])
   const submit = (event: FormEvent) => {
     event.preventDefault()
     if (busy) return

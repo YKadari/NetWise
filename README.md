@@ -99,3 +99,7 @@ npm run dev
 ```
 
 Open `http://127.0.0.1:5173/`. The Vite `/api` proxy defaults to port 8001; set `$env:NESTWISE_API_PROXY_TARGET = 'http://127.0.0.1:8000'` in the frontend terminal if the backend runs on port 8000 instead. Run `npm run typecheck`, `npm test`, and `npm run build` from `frontend/`.
+
+Batch 6A makes Analyze start with three options: AI lease review, manual rental details, or an immediate synthetic result. Financial profile entry and stress scenarios are optional follow-ups on results; month-by-month detail is collapsed until requested. The sample comparison uses temporary data and does not replace saved Rental A/B offers. See [the Batch 6A UX report](docs/BATCH_6A_UX_REPORT.md) for the redesigned flow and verification outcomes.
+
+Batch 6B polishes the Analyze entry and comparison actions, keeps new manual rentals blank, and makes incomplete cost terms visible as known subtotals. It does not change the financial calculation formulas or deployment configuration. See [the Batch 6B QA report](docs/BATCH_6B_REPORT.md) for verification and remaining deployment blockers.

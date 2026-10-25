@@ -1,7 +1,7 @@
 import type { Concession, FinancialProfile, RentalOffer } from '../types/rental'
 
-export function money(value: number | null | undefined): string {
-  return value === null || value === undefined || !Number.isFinite(value) ? 'Unknown' : new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD', maximumFractionDigits: 2 }).format(value)
+export function money(value: number | null | undefined, fixedCents = false): string {
+  return value === null || value === undefined || !Number.isFinite(value) ? 'Unknown' : new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD', minimumFractionDigits: fixedCents || !Number.isInteger(value) ? 2 : 0, maximumFractionDigits: 2 }).format(value)
 }
 
 export function amount(raw: string, name: string, positive = false): number {
@@ -19,6 +19,7 @@ export function whole(raw: string, name: string, min: number, max: number): numb
 }
 
 export interface ChargeDraft { name: string; amount: string }
+export interface OtherChargeDraft extends ChargeDraft { refundable: boolean }
 export interface ConcessionDraft { kind: Concession['kind']; month: string; amount: string; eligible_category: 'base_rent' | 'recurring_charge' | 'utilities'; eligible_charge_name: string }
 export interface ManualDraft {
   label: string; rent: string; months: string
@@ -27,6 +28,7 @@ export interface ManualDraft {
   recurringStatus: 'complete' | 'unknown'; recurring: ChargeDraft[]
   utilityStatus: 'included_in_rent' | 'estimated' | 'unknown'; utilities: string
   feeStatus: 'complete' | 'unknown'; fees: ChargeDraft[]
+  otherChargeStatus: 'complete' | 'unknown'; otherCharges: OtherChargeDraft[]
   concessions: ConcessionDraft[]
   roommateStatus: 'provided' | 'none' | 'unknown'; roommate: string
   holdingStatus: 'none' | 'unknown'
@@ -34,7 +36,7 @@ export interface ManualDraft {
 
 export const blankManual = (): ManualDraft => ({
   label: '', rent: '', months: '12', depositStatus: 'unknown', deposit: '', firstPrepaid: 'unknown', lastPrepaid: 'unknown',
-  recurringStatus: 'unknown', recurring: [], utilityStatus: 'unknown', utilities: '', feeStatus: 'unknown', fees: [],
+  recurringStatus: 'unknown', recurring: [], utilityStatus: 'unknown', utilities: '', feeStatus: 'unknown', fees: [], otherChargeStatus: 'unknown', otherCharges: [],
   concessions: [], roommateStatus: 'unknown', roommate: '', holdingStatus: 'unknown',
 })
 
@@ -45,6 +47,7 @@ export function offerToManual(offer: RentalOffer): ManualDraft {
     recurringStatus: offer.recurring_charges_status ?? 'unknown', recurring: (offer.recurring_charges ?? []).map(item => ({ name: item.name, amount: String(item.monthly_amount) })),
     utilityStatus: offer.utilities?.status ?? 'unknown', utilities: String(offer.utilities?.estimated_monthly_amount ?? ''),
     feeStatus: offer.upfront?.nonrefundable_fees_status ?? 'unknown', fees: (offer.upfront?.nonrefundable_fees ?? []).map(item => ({ name: item.name, amount: String(item.amount) })),
+    otherChargeStatus: offer.upfront?.other_charges_status ?? 'unknown', otherCharges: (offer.upfront?.other_charges ?? []).map(item => ({ name: item.name, amount: String(item.amount), refundable: Boolean(item.refundable) })),
     concessions: (offer.concessions ?? []).map(item => ({ kind: item.kind, month: String(item.month), amount: String(item.amount ?? ''), eligible_category: item.eligible_category ?? 'base_rent', eligible_charge_name: item.eligible_charge_name ?? '' })),
     roommateStatus: offer.expected_roommate_contribution?.status ?? 'unknown', roommate: String(offer.expected_roommate_contribution?.amount ?? ''),
     holdingStatus: offer.upfront?.holding_deposit_status === 'none' ? 'none' : 'unknown',
@@ -57,7 +60,8 @@ export function manualToOffer(form: ManualDraft): RentalOffer {
   const lease_term_months = whole(form.months, 'Lease duration', 1, 120)
   const recurring_charges = form.recurring.map((item, index) => ({ name: item.name.trim(), monthly_amount: amount(item.amount, `Recurring fee ${index + 1}`, true) }))
   const nonrefundable_fees = form.fees.map((item, index) => ({ name: item.name.trim(), amount: amount(item.amount, `Move-in charge ${index + 1}`, true) }))
-  if ([...recurring_charges, ...nonrefundable_fees].some(item => !item.name)) throw new Error('Name each listed charge or remove the empty row.')
+  const other_charges = form.otherCharges.map((item, index) => ({ name: item.name.trim(), amount: amount(item.amount, `Other upfront charge ${index + 1}`, true), refundable: item.refundable }))
+  if ([...recurring_charges, ...nonrefundable_fees, ...other_charges].some(item => !item.name)) throw new Error('Name each listed charge or remove the empty row.')
   if (new Set(recurring_charges.map(item => item.name.toLowerCase())).size !== recurring_charges.length) throw new Error('Recurring fee names must be unique.')
   const concessions: Concession[] = form.concessions.map((item, index) => {
     const base = { kind: item.kind, month: whole(item.month, `Concession ${index + 1} month`, 1, lease_term_months), eligible_category: item.kind === 'free_rent_month' ? 'base_rent' as const : item.eligible_category }
@@ -74,7 +78,7 @@ export function manualToOffer(form: ManualDraft): RentalOffer {
     upfront: {
       security_deposit: form.depositStatus === 'provided' ? { status: 'provided', amount: amount(form.deposit, 'Security deposit') } : { status: form.depositStatus },
       first_month_rent_due_upfront: form.firstPrepaid, last_month_rent_due_upfront: form.lastPrepaid,
-      nonrefundable_fees, nonrefundable_fees_status: form.feeStatus, other_charges: [], other_charges_status: 'complete', holding_deposit_status: form.holdingStatus,
+      nonrefundable_fees, nonrefundable_fees_status: form.feeStatus, other_charges, other_charges_status: form.otherChargeStatus, holding_deposit_status: form.holdingStatus,
     }, concessions,
   }
 }
