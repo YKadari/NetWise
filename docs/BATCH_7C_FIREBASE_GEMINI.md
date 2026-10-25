@@ -54,6 +54,8 @@ VITE_FIREBASE_PROJECT_ID=<same Firebase project ID>
 VITE_FIREBASE_APP_ID=<Firebase web app ID>
 ```
 
+The Docker production build validates these four variables before running Vite. Missing, placeholder, or malformed values fail the build with variable names only; the values themselves are never printed. If `FIREBASE_PROJECT_ID` is supplied to the build, it must match `VITE_FIREBASE_PROJECT_ID`, because the frontend compares that value with the backend status response. Render exposes service environment variables as Docker build arguments, and the Dockerfile declares the Firebase values before the frontend build. Changing these values requires a new image build; a runtime-only restart cannot change the compiled frontend. For an intentional local no-auth production preview only, set `NESTWISE_REQUIRE_FIREBASE_CONFIG=false`; do not use that override for the Docker production image.
+
 Start FastAPI and Vite using the existing Batch 5B commands. Check `/api/lease/status` for readiness; it returns only non-secret configuration status and project ID, never credentials. Do not share shell output containing environment variables.
 
 ## Owner setup required before any public enablement
@@ -76,7 +78,7 @@ The frontend does not expose the Gemini API key and the browser never calls Gemi
 
 ## Files changed
 
-Batch 7C changes Firebase token verification, quota reservation, extraction route protection, provider readiness, frontend sign-in and bearer-token handling, environment examples, the Docker frontend build arguments, dependency declarations, tests, README guidance, and this report. The extraction algorithms, financial formulas, housing optimization, and Render's default disabled flag were not changed.
+Batch 7C changes Firebase token verification, quota reservation, extraction route protection, provider readiness, frontend sign-in and bearer-token handling, environment examples, Docker frontend build arguments, dependency declarations, tests, README guidance, and this report. The production frontend build now validates Firebase configuration before Vite bundles the app. The extraction algorithms, financial formulas, housing optimization, and Render's default disabled flag were not changed.
 
 ## Verification status
 
@@ -93,7 +95,7 @@ The new frontend Firebase tests cover initialization/configuration, auth state, 
 
 No live Firebase sign-in, Firestore transaction, or Gemini request was performed. These steps require the owner's Firebase web config, server credential, Firestore database/IAM, Gemini API key, and confirmed provider quota. No cloud project or resource was changed. A live sign-in and Gemini smoke test requires the owner's Firebase project, web config, service credential, Firestore, Gemini key, and a verified quota.
 
-For the deployment-readiness code review, the Dockerfile declares only the four public `VITE_FIREBASE_*` values as build arguments. It does not declare or reference `GEMINI_API_KEY` or `FIREBASE_SERVICE_ACCOUNT_JSON`; the Docker build copies only the frontend, backend, and public data directories, while `.dockerignore` excludes `.env` files. An image-layer scan/build could not be completed because the local Docker daemon is unavailable. The browser build output was scanned for secret-looking credential patterns and contained no matches. `render.yaml` marks `NESTWISE_ENABLE_PUBLIC_GEMINI` as `sync: false`, so Render does not set a value from the Blueprint on sync; production defaults to disabled if the dashboard variable is absent. Render's Blueprint documentation states omitted dashboard environment variables are preserved and listed variables can be modified by the Blueprint. The app calls `firestore.client(app=...)` without a database ID, which selects the Firebase Admin SDK's default database. Production GET checks to the supplied Render URL were attempted but could not connect from this environment, so deployed runtime state is not verified here.
+For the deployment-readiness code review, the Dockerfile declares the four public `VITE_FIREBASE_*` values and non-secret backend `FIREBASE_PROJECT_ID` as build arguments. The production Docker build forces the validator on; it checks required values and project-ID agreement without printing values. The Dockerfile does not declare or reference `GEMINI_API_KEY` or `FIREBASE_SERVICE_ACCOUNT_JSON`; it copies only the frontend, backend, and public data directories, while `.dockerignore` excludes `.env` files. An image-layer scan/build could not be completed because the local Docker daemon is unavailable. The browser build output was scanned for secret-looking credential patterns and contained no matches. `render.yaml` marks `NESTWISE_ENABLE_PUBLIC_GEMINI` as `sync: false`, so Render does not set a value from the Blueprint on sync; production defaults to disabled if the dashboard variable is absent. Render's Blueprint documentation states omitted dashboard environment variables are preserved and listed variables can be modified by the Blueprint. The app calls `firestore.client(app=...)` without a database ID, which selects the Firebase Admin SDK's default database. Production GET checks to the supplied Render URL were attempted but could not connect from this environment, so deployed runtime state is not verified here.
 
 Commands:
 
