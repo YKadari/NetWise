@@ -1,5 +1,6 @@
 """PDF route regressions. All provider calls in this file are mocked."""
 import asyncio
+import json
 from io import BytesIO
 import threading
 
@@ -12,6 +13,8 @@ from backend.app.api import lease_routes as routes
 from backend.app.lease_extraction.models import CandidateTerm, LeaseExtraction
 from backend.app.lease_extraction.provider import GeminiOutputError, GeminiProviderError, GeminiQuotaError
 from backend.app.main import app
+from backend.app.pdf_redaction.intake import document_digest
+from backend.app.pdf_redaction.redact import redact_pdf
 from scripts.diagnose_pdf_extraction import synthetic_pdf
 
 
@@ -30,7 +33,15 @@ def extraction():
         source_excerpt='Monthly base rent is $1500.', status='explicit')])
 
 
-def test_text_pdf_passes_original_bytes_and_verifies_page(monkeypatch):
+def approval_data(payload, *, valid=True):
+    output = (redact_pdf(payload, 'sample.pdf', 'application/pdf', document_digest(payload), [],
+                         acknowledge_no_candidates=True) if valid else b'')
+    return {'approval': json.dumps({'document_digest': document_digest(payload),
+        'approved_pdf_digest': document_digest(output), 'candidate_ids': [],
+        'acknowledge_no_candidates': True, 'consent_to_gemini': True})}
+
+
+def test_approved_text_pdf_passes_verified_bytes_and_verifies_page(monkeypatch):
     payload = synthetic_pdf()
     assert 'Monthly base rent is $1500.' in PdfReader(BytesIO(payload)).pages[0].extract_text()
     seen = []
@@ -39,9 +50,11 @@ def test_text_pdf_passes_original_bytes_and_verifies_page(monkeypatch):
         return extraction()
     monkeypatch.setattr(routes, 'extract_with_gemini', provider)
     with TestClient(app) as client:
-        result = client.post('/api/lease/extract-pdf', files={'file': ('sample.pdf', payload, 'application/pdf')})
+        result = client.post('/api/lease/extract-redacted-pdf', files={'file': ('sample.pdf', payload, 'application/pdf')}, data=approval_data(payload))
     assert result.status_code == 200
-    assert seen == [(payload, True)]
+    verified = redact_pdf(payload, 'sample.pdf', 'application/pdf', document_digest(payload), [], acknowledge_no_candidates=True)
+    assert verified != payload
+    assert seen == [(verified, True)]
     assert result.json()['source_type'] == 'pdf'
     assert result.json()['review_required'] is True
     assert result.json()['terms'][0]['evidence_verification'] == 'verified_page'
@@ -49,7 +62,7 @@ def test_text_pdf_passes_original_bytes_and_verifies_page(monkeypatch):
     assert 'evaluation' not in result.json()
 
 
-@pytest.mark.parametrize(('kind', 'expected'), [('empty', 422), ('signature', 415), ('malformed', 422), ('encrypted', 422), ('pages', 422), ('oversize', 413), ('mime', 415)])
+@pytest.mark.parametrize(('kind', 'expected'), [('empty', 415), ('signature', 415), ('malformed', 422), ('encrypted', 422), ('pages', 422), ('oversize', 413), ('mime', 415)])
 def test_pdf_rejections_never_contact_provider(monkeypatch, kind, expected):
     def forbidden(*args, **kwargs):
         pytest.fail('Invalid PDF reached the provider')
@@ -67,7 +80,7 @@ def test_pdf_rejections_never_contact_provider(monkeypatch, kind, expected):
         writer.write(buffer)
         payload = buffer.getvalue()
     with TestClient(app) as client:
-        result = client.post('/api/lease/extract-pdf', files={'file': ('sample.pdf', payload, 'text/plain' if kind == 'mime' else 'application/pdf')})
+        result = client.post('/api/lease/extract-redacted-pdf', files={'file': ('sample.pdf', payload, 'text/plain' if kind == 'mime' else 'application/pdf')}, data=approval_data(payload, valid=False))
     assert result.status_code == expected
 
 
@@ -76,7 +89,8 @@ def test_pdf_provider_errors_are_distinct_and_sanitized(monkeypatch, error, expe
     def fail(*args, **kwargs): raise error('private-document-and-secret-marker')
     monkeypatch.setattr(routes, 'extract_with_gemini', fail)
     with TestClient(app) as client:
-        response = client.post('/api/lease/extract-pdf', files={'file': ('sample.pdf', synthetic_pdf(), 'application/pdf')})
+        payload = synthetic_pdf()
+        response = client.post('/api/lease/extract-redacted-pdf', files={'file': ('sample.pdf', payload, 'application/pdf')}, data=approval_data(payload))
     assert response.status_code == expected
     assert 'private-document-and-secret-marker' not in response.text
 
@@ -88,9 +102,11 @@ def test_pdf_provider_does_not_block_other_requests(monkeypatch):
         if not release.wait(3): raise RuntimeError('test worker timed out')
         return extraction()
     monkeypatch.setattr(routes, 'extract_with_gemini', slow_provider)
+    payload = synthetic_pdf()
+    approval = approval_data(payload)
     async def requests():
         async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url='http://test') as client:
-            pending = asyncio.create_task(client.post('/api/lease/extract-pdf', files={'file': ('sample.pdf', synthetic_pdf(), 'application/pdf')}))
+            pending = asyncio.create_task(client.post('/api/lease/extract-redacted-pdf', files={'file': ('sample.pdf', payload, 'application/pdf')}, data=approval))
             try:
                 assert await asyncio.to_thread(entered.wait, 2)
                 assert not pending.done()

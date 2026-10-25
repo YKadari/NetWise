@@ -2,7 +2,7 @@ import { cleanup, fireEvent, render, screen, within } from '@testing-library/rea
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { LeaseReview } from '../components/LeaseReview'
 import { LeaseInput } from '../components/LeaseInput'
-import { extractLeasePdf } from '../lib/rentalApi'
+import { extractApprovedPdf } from '../lib/rentalApi'
 import { buildReviewDecisions, initialReviewSummary } from '../lib/leaseReview'
 import type { CandidateTerm, LeaseDraft, LeaseFieldId } from '../types/rental'
 
@@ -113,11 +113,14 @@ describe('Batch 8 readable review', () => {
     const fetchMock = vi.fn().mockResolvedValueOnce(new Response(JSON.stringify(source), { status: 200 })).mockResolvedValueOnce(new Response(JSON.stringify({ detail: 'internal timeout' }), { status: 504 })).mockResolvedValueOnce(new Response(JSON.stringify({ detail: 'private PDF parser message' }), { status: 422 }))
     vi.stubGlobal('fetch', fetchMock)
     const file = new File(['%PDF-synthetic'], 'sample.pdf', { type: 'application/pdf' })
-    expect(await extractLeasePdf(file)).toEqual(source)
+    const approval = { document_digest: 'a'.repeat(64), approved_pdf_digest: 'b'.repeat(64), candidate_ids: ['region-0001'], consent_to_gemini: true as const, acknowledge_no_candidates: false }
+    expect(await extractApprovedPdf(file, approval)).toEqual(source)
     const request = fetchMock.mock.calls[0][1] as RequestInit
     expect((request.body as FormData).get('file')).toBe(file)
+    expect(JSON.parse((request.body as FormData).get('approval') as string)).toEqual(approval)
+    expect(fetchMock.mock.calls[0][0]).toBe('/api/lease/extract-redacted-pdf')
     expect(request.headers).toBeUndefined()
-    await expect(extractLeasePdf(file)).rejects.toThrow(/paste the lease text instead/)
-    await expect(extractLeasePdf(file)).rejects.toThrow(/could not read that PDF/)
+    await expect(extractApprovedPdf(file, approval)).rejects.toThrow(/PDF download remains available/)
+    await expect(extractApprovedPdf(file, approval)).rejects.toThrow(/could not be verified/)
   })
 })

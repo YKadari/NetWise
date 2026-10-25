@@ -16,6 +16,16 @@ FieldId = Literal[
     "notice_requirements", "renewal_or_rent_change", "late_payment_fees",
     "roommate_liability", "conditional_concessions",
 ]
+CandidateFieldId = Literal[
+    "rental_label", "monthly_base_rent", "lease_term_months", "lease_start_date", "occupants",
+    "recurring_charges", "utilities", "security_deposit", "first_month_rent_due_upfront",
+    "last_month_rent_due_upfront", "nonrefundable_fees", "other_charges", "holding_deposit",
+    "concessions", "early_termination", "lease_break_fee", "notice_requirements",
+    "renewal_or_rent_change", "late_payment_fees", "roommate_liability", "conditional_concessions",
+]
+EXTRACTION_STATUS_FIELD_IDS = frozenset({
+    "recurring_charges_status", "nonrefundable_fees_status", "other_charges_status", "holding_deposit_status",
+})
 Status = Literal["explicit", "not_found", "ambiguous", "contradictory"]
 ReviewState = Literal["needs_review", "accepted", "corrected", "unknown", "confirmed_none"]
 JsonScalar = str | int | float | bool | None
@@ -28,7 +38,7 @@ class StrictModel(BaseModel):
 
 
 class CandidateTerm(StrictModel):
-    field_id: FieldId
+    field_id: CandidateFieldId
     value: Value = None
     source_excerpt: str | None = Field(default=None, max_length=1500)
     page_reference: int | None = Field(default=None, ge=1, le=1000)

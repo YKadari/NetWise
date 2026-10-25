@@ -49,7 +49,20 @@ def main() -> None:
     payload = synthetic_pdf()
     started = time.perf_counter()
     with TestClient(app) as client:
-        response = client.post('/api/lease/extract-pdf', files={'file': ('synthetic.pdf', payload, 'application/pdf')})
+        files = {'file': ('synthetic.pdf', payload, 'application/pdf')}
+        inspected = client.post('/api/pdf-redaction/inspect', files=files)
+        if inspected.status_code != 200:
+            print(json.dumps({'live_request_made': False, 'inspect_status': inspected.status_code})); return
+        inspection = inspected.json()
+        ids = [item['id'] for item in inspection['candidates']]
+        exported = client.post('/api/pdf-redaction/export', files=files, data={
+            'document_digest': inspection['document_digest'], 'candidate_ids': ids,
+            'acknowledge_no_candidates': 'true' if not ids else 'false'})
+        if exported.status_code != 200:
+            print(json.dumps({'live_request_made': False, 'export_status': exported.status_code})); return
+        response = client.post('/api/lease/extract-redacted-pdf', files=files, data={'approval': json.dumps({
+            'document_digest': inspection['document_digest'], 'approved_pdf_digest': exported.headers['x-redacted-pdf-sha256'],
+            'candidate_ids': ids, 'acknowledge_no_candidates': not ids, 'consent_to_gemini': True})})
     report = {'sdk': version('google-genai'), 'pdf_bytes': len(payload), 'http_status': response.status_code, 'elapsed_ms': round((time.perf_counter() - started) * 1000)}
     if response.status_code == 200:
         draft = LeaseDraft.model_validate(response.json())

@@ -11,6 +11,48 @@ from backend.app.rental.models import FinancialProfile, RentalOffer
 from .models import CandidateTerm, ConfirmRequest, LeaseDraft, LeaseExtraction
 
 
+_TEST_METADATA_HEADING = re.compile(
+    r"^\s{0,3}(?P<marks>#{1,6})?\s*(?:EXPECTED\s+TEST\s+FACTS|TEST[- ]ONLY(?:\s+INSTRUCTIONS)?|TEST\s+INSTRUCTIONS|EXPECTED\s+OUTPUT|TEST\s+FIXTURE|EVALUATION\s+NOTES)\s*:?\s*(?:#{1,6})?\s*$",
+    re.IGNORECASE,
+)
+_MARKDOWN_HEADING = re.compile(r"^\s{0,3}(?P<marks>#{1,6})\s+")
+_TEST_METADATA_END = re.compile(r"^\s{0,3}(?:END\s+(?:EXPECTED\s+TEST\s+FACTS|TEST[- ]ONLY|TEST\s+INSTRUCTIONS)|END\s+TEST\s+METADATA)\s*:?\s*$", re.IGNORECASE)
+
+
+def strip_test_metadata_sections(source_text: str) -> str:
+    """Remove clearly labeled synthetic test/evaluation appendices before extraction.
+
+    Markdown sections end at the next same-or-higher-level heading. A plain
+    text test-metadata heading ends at an explicit end marker or the next
+    Markdown heading. The original source is never changed or persisted.
+    """
+    kept: list[str] = []
+    skip_heading_level: int | None = None
+    skip_plain_section = False
+    for line in source_text.splitlines(keepends=True):
+        heading = _MARKDOWN_HEADING.match(line)
+        if skip_heading_level is not None or skip_plain_section:
+            if _TEST_METADATA_END.match(line):
+                skip_heading_level = None
+                skip_plain_section = False
+                continue
+            if heading and (skip_plain_section or len(heading.group("marks")) <= skip_heading_level):
+                skip_heading_level = None
+                skip_plain_section = False
+            else:
+                continue
+        metadata = _TEST_METADATA_HEADING.match(line)
+        if metadata:
+            marks = metadata.group("marks")
+            if marks:
+                skip_heading_level = len(marks)
+            else:
+                skip_plain_section = True
+            continue
+        kept.append(line)
+    return "".join(kept).strip()
+
+
 def _norm(text: str) -> str:
     return re.sub(r"[^\w]+", " ", text.casefold()).strip()
 
@@ -132,6 +174,10 @@ def confirm_draft(request: ConfirmRequest) -> dict[str, Any]:
         return {"status": "provided" if value is not None else ("none" if act == "confirm_none" else "unknown"),
                 "amount": value, "provenance": prov(name)}
 
+    def rent_timing(name: str) -> Any:
+        value = val(name, "unknown")
+        return "unknown" if value is None else value
+
     recurring = charge_items("recurring_charges")
     nonref = charge_items("nonrefundable_fees")
     others = charge_items("other_charges")
@@ -154,9 +200,9 @@ def confirm_draft(request: ConfirmRequest) -> dict[str, Any]:
                       "provenance": prov("utilities")},
         "upfront": {
             "security_deposit": money_term("security_deposit"),
-            "first_month_rent_due_upfront": val("first_month_rent_due_upfront", "unknown"),
+            "first_month_rent_due_upfront": rent_timing("first_month_rent_due_upfront"),
             "first_month_rent_provenance": prov("first_month_rent_due_upfront"),
-            "last_month_rent_due_upfront": val("last_month_rent_due_upfront", "unknown"),
+            "last_month_rent_due_upfront": rent_timing("last_month_rent_due_upfront"),
             "last_month_rent_provenance": prov("last_month_rent_due_upfront"),
             "nonrefundable_fees": nonref,
             "nonrefundable_fees_status": "complete" if action("nonrefundable_fees_status") in ("accept", "confirm_none") else "unknown",

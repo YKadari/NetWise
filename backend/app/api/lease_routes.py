@@ -6,14 +6,18 @@ from collections import defaultdict, deque
 import threading
 import time
 
-from fastapi import APIRouter, File, HTTPException, Request, UploadFile
+from fastapi import APIRouter, File, Form, HTTPException, Request, UploadFile
+from pydantic import ValidationError
 from starlette.concurrency import run_in_threadpool
 
 from backend.app.lease_extraction.config import extraction_enabled, provider_status
 from backend.app.lease_extraction.models import ConfirmRequest, LeaseTextRequest
 from backend.app.lease_extraction.provider import extract_with_gemini
 from backend.app.lease_extraction.provider import GeminiConfigurationError, GeminiOutputError, GeminiQuotaError
-from backend.app.lease_extraction.workflow import confirm_draft, make_draft, verify_pdf_evidence, verify_text_evidence
+from backend.app.lease_extraction.workflow import confirm_draft, make_draft, strip_test_metadata_sections, verify_pdf_evidence, verify_text_evidence
+from backend.app.pdf_redaction.intake import document_digest, read_pdf_upload
+from backend.app.pdf_redaction.models import RedactedPdfApproval
+from backend.app.pdf_redaction.redact import redact_pdf
 
 router = APIRouter(prefix="/api/lease", tags=["lease extraction and review"])
 MAX_PDF_BYTES = 10 * 1024 * 1024
@@ -73,37 +77,48 @@ def _provider_error(exc: Exception) -> HTTPException:
 def extract_text(request: LeaseTextRequest, http_request: Request) -> dict[str, object]:
     _require_extraction_enabled()
     _limit_extraction_requests(http_request)
+    extraction_text = strip_test_metadata_sections(request.text)
+    if not extraction_text:
+        raise HTTPException(status_code=422, detail="No lease text remains after excluding test-only metadata")
     try:
-        extraction = extract_with_gemini(request.text)
+        extraction = extract_with_gemini(extraction_text)
     except (RuntimeError, TimeoutError, ValueError) as exc:
         raise _provider_error(exc) from None
-    extraction = verify_text_evidence(extraction, request.text)
+    extraction = verify_text_evidence(extraction, extraction_text)
     return make_draft(extraction, "pasted_text").model_dump(mode="json")
 
 
-@router.post("/extract-pdf")
-async def extract_pdf(http_request: Request, file: UploadFile = File(...)) -> dict[str, object]:
+@router.post("/extract-pdf", include_in_schema=False)
+async def extract_pdf() -> None:
+    raise HTTPException(status_code=410, detail="Direct PDF extraction has been replaced. Inspect and approve a redacted PDF before AI analysis.")
+
+
+@router.post("/extract-redacted-pdf")
+async def extract_redacted_pdf(http_request: Request, file: UploadFile = File(...),
+                               approval: str = Form(..., max_length=65536)) -> dict[str, object]:
     _require_extraction_enabled()
     _limit_extraction_requests(http_request)
-    if not file.filename or not file.filename.casefold().endswith(".pdf") or file.content_type != "application/pdf":
-        raise HTTPException(status_code=415, detail="Upload a PDF file with application/pdf media type")
-    chunks = []
-    size = 0
-    while True:
-        chunk = await file.read(min(1024 * 1024, MAX_PDF_BYTES + 1 - size))
-        if not chunk:
-            break
-        size += len(chunk)
-        if size > MAX_PDF_BYTES:
-            raise HTTPException(status_code=413, detail="PDF exceeds the 10 MB upload limit")
-        chunks.append(chunk)
-    data = b"".join(chunks)
-    # PDF parsing and the synchronous SDK call must not block the ASGI loop.
-    # The text route is synchronous and FastAPI already runs it in this pool.
-    return await run_in_threadpool(_extract_pdf_data, data)
+    form = await http_request.form()
+    if set(form) != {"file", "approval"} or len(form.getlist("file")) != 1 or len(form.getlist("approval")) != 1:
+        raise HTTPException(status_code=422, detail="Provide one PDF and one approval record; extra fields are not accepted")
+    try:
+        reviewed = RedactedPdfApproval.model_validate_json(approval)
+    except (ValidationError, ValueError):
+        raise HTTPException(status_code=422, detail="Valid document identifiers, unique approved regions, and explicit Gemini consent are required") from None
+    data = await read_pdf_upload(file)
+    return await run_in_threadpool(_extract_approved_pdf, data, file.filename, file.content_type, reviewed)
 
 
-def _extract_pdf_data(data: bytes) -> dict[str, object]:
+def _extract_approved_pdf(data: bytes, filename: str | None, content_type: str | None,
+                          approval: RedactedPdfApproval) -> dict[str, object]:
+    verified_output = redact_pdf(data, filename, content_type, approval.document_digest, approval.candidate_ids,
+                                acknowledge_no_candidates=approval.acknowledge_no_candidates)
+    if document_digest(verified_output) != approval.approved_pdf_digest:
+        raise HTTPException(status_code=409, detail="The verified PDF differs from the version you reviewed. Generate and review it again.")
+    return _extract_verified_pdf_data(verified_output)
+
+
+def _extract_verified_pdf_data(data: bytes) -> dict[str, object]:
     if not data:
         raise HTTPException(status_code=422, detail="PDF upload is empty")
     if not data.startswith(b"%PDF-"):
@@ -132,5 +147,7 @@ def _extract_pdf_data(data: bytes) -> dict[str, object]:
 def confirm_lease(request: ConfirmRequest) -> dict[str, object]:
     try:
         return confirm_draft(request)
+    except ValidationError:
+        raise HTTPException(status_code=422, detail="Reviewed terms do not match valid rental inputs. Correct the terms and try again.") from None
     except ValueError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from None

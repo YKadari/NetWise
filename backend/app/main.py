@@ -25,6 +25,7 @@ from backend.app.api.stress_routes import router as stress_router
 from backend.app.api.decision_brief_routes import router as decision_brief_router
 from backend.app.api.clause_routes import router as clause_router
 from backend.app.api.comparison_advisor_routes import router as comparison_advisor_router
+from backend.app.api.pdf_redaction_routes import router as pdf_redaction_router
 from backend.app.optimization.data_loader import PUBLIC_CORE, load_public_areas, validate_areas
 from backend.app.optimization.models import HousingArea
 
@@ -142,6 +143,16 @@ def create_app(
             return JSONResponse(status_code=404, content={"detail": "Not Found"})
         return response
 
+    @application.middleware("http")
+    async def pdf_redaction_no_store(request, call_next):
+        response = await call_next(request)
+        if (request.url.path.startswith("/api/pdf-redaction/")
+                or request.url.path in {"/api/lease/extract-redacted-pdf", "/api/lease/extract-pdf"}):
+            response.headers["Cache-Control"] = "no-store, no-cache, must-revalidate"
+            response.headers["Pragma"] = "no-cache"
+            response.headers["X-Content-Type-Options"] = "nosniff"
+        return response
+
     application.include_router(router)
     application.include_router(rental_router)
     application.include_router(lease_router)
@@ -149,6 +160,7 @@ def create_app(
     application.include_router(decision_brief_router)
     application.include_router(clause_router)
     application.include_router(comparison_advisor_router)
+    application.include_router(pdf_redaction_router)
     assets = Path(static_dir) if static_dir is not None else PROJECT_ROOT / "frontend" / "dist"
     if (assets / "index.html").is_file():
         application.mount("/", SPAStaticFiles(directory=assets, html=True), name="frontend")

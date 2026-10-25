@@ -1,4 +1,5 @@
 import { ApiError } from './api'
+import type { RedactedPdfApproval } from './pdfRedaction'
 import type { ClauseExplanation, FinancialProfile, LeaseConfirmation, LeaseDraft, LeaseServiceStatus, RentalComparison, RentalComparisonExplanation, RentalDecisionBrief, RentalEvaluation, RentalFollowUpResponse, RentalOffer, ReviewDecision, StressAiInterpretation, StressResult, StressScenario } from '../types/rental'
 
 const messages: Record<number, string> = {
@@ -28,6 +29,19 @@ async function rentalRequest<T>(path: string, options: RequestInit = {}): Promis
           ? 'Paste some lease text to review, or enter the rental terms manually.'
           : 'Some reviewed terms could not be added to the rental. Check the values and try again.'
       : detail
+    if (path === '/lease/extract-redacted-pdf') {
+      const pdfMessages: Record<number, string> = {
+        409: 'The PDF no longer matches the version you approved. Generate and review it again. Your download remains available.',
+        413: 'The original PDF exceeds the 10 MB limit. Choose a smaller supported PDF.',
+        415: 'Choose a supported text-based PDF. Your existing download remains available.',
+        422: 'The approved PDF could not be verified for analysis. Review the document and redaction selections again. Your download remains available.',
+        429: 'AI analysis has reached its request limit. Wait before choosing to retry. Your PDF download remains available.',
+        502: 'AI lease findings could not be verified. Your PDF download remains available; you can retry or use guided analysis.',
+        503: 'AI analysis is unavailable here. Your PDF download and guided rental analysis remain available.',
+        504: 'AI analysis took too long. Your PDF download remains available. Retry only when you are ready.',
+      }
+      throw new ApiError(pdfMessages[response.status] || 'PDF analysis failed. Your download remains available.', response.status)
+    }
     if (path === '/rental/decision-brief') {
       const briefMessage: Record<number, string> = {
         422: 'Check the rental terms and recalculate before requesting AI insights.',
@@ -94,10 +108,11 @@ export async function extractLeaseText(text: string): Promise<LeaseDraft> {
   return checkDraft(await rentalRequest<LeaseDraft>('/lease/extract-text', json({ text })))
 }
 
-export async function extractLeasePdf(file: File): Promise<LeaseDraft> {
+export async function extractApprovedPdf(file: File, approval: RedactedPdfApproval, signal?: AbortSignal): Promise<LeaseDraft> {
   const body = new FormData()
   body.append('file', file)
-  return checkDraft(await rentalRequest<LeaseDraft>('/lease/extract-pdf', { method: 'POST', body }))
+  body.append('approval', JSON.stringify(approval))
+  return checkDraft(await rentalRequest<LeaseDraft>('/lease/extract-redacted-pdf', { method: 'POST', body, signal, cache: 'no-store' }))
 }
 
 export async function confirmLease(draft: LeaseDraft, decisions: ReviewDecision[]): Promise<LeaseConfirmation> {
