@@ -66,6 +66,32 @@ export interface RentalEvaluation {
   assumptions: string[]
 }
 
+export interface RentalDecisionBrief {
+  source: 'gemini'
+  headline: string
+  overall_summary: string
+  important_findings: string[]
+  key_uncertainties: string[]
+  suggested_next_step: string
+  fact_ids: string[]
+    follow_ups: RentalFollowUp[]
+    additional_follow_ups: RentalFollowUp[]
+}
+
+  export interface RentalFollowUp {
+    title: string
+    why_it_matters: string
+    question: string
+    priority: string
+    facts: string
+  }
+
+  export interface RentalFollowUpResponse {
+    source: 'deterministic'
+    follow_ups: RentalFollowUp[]
+    additional_follow_ups: RentalFollowUp[]
+  }
+
 export interface RentalComparison {
   left: RentalEvaluation
   right: RentalEvaluation
@@ -96,4 +122,20 @@ export interface StressResult {
   warnings: { code: string; message: string }[]
   explanation: string
   result_is_hypothetical_not_a_forecast: boolean
+  interpretation: StressInterpretation
+}
+
+export interface StressInterpretation {
+  source: 'deterministic'
+  headline: string
+  what_changed: string
+  main_consequence: string
+  why_it_matters: string
+  what_to_watch: string
+  what_to_consider: string
+}
+
+export interface StressAiInterpretation extends Omit<StressInterpretation, 'source'> {
+  source: 'gemini'
+  statement_ids: string[]
 }

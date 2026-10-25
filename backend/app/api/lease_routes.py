@@ -33,10 +33,10 @@ def _limit_extraction_requests(request: Request) -> None:
             if not _REQUEST_TIMES[key]:
                 del _REQUEST_TIMES[key]
         if address not in _REQUEST_TIMES and len(_REQUEST_TIMES) >= 4096:
-            raise HTTPException(status_code=429, detail="Gemini extraction is busy; retry later")
+            raise HTTPException(status_code=429, detail="Gemini requests are busy; retry later")
         times = _REQUEST_TIMES[address]
         if len(times) >= 5:
-            raise HTTPException(status_code=429, detail="Limit reached: at most five Gemini submissions per minute per client")
+            raise HTTPException(status_code=429, detail="Limit reached: at most five Gemini requests per minute per client")
         times.append(now)
 
 

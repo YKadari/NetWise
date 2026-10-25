@@ -28,10 +28,15 @@ const evaluation: RentalEvaluation = {
 }
 const jsonResponse = (body: unknown, status = 200) => ({ ok: status >= 200 && status < 300, status, json: async () => body })
 const openSampleResult = async () => {
-  fireEvent.click(screen.getByRole('button', { name: /Try a sample rental/ }))
+  fireEvent.click(screen.getByRole('button', { name: /Try with example data/ }))
   for (let n = 0; n < 3; n++) fireEvent.click(screen.getByRole('button', { name: 'Continue' }))
   fireEvent.click(screen.getByRole('button', { name: 'See my rental costs' }))
   return screen.findByLabelText('Rental evaluation results')
+}
+const openLeaseInput = async () => {
+  fireEvent.click(screen.getByRole('button', { name: /Start rental analysis/ }))
+  fireEvent.click(screen.getByRole('button', { name: 'Use the detailed manual form instead' }))
+  fireEvent.click(await screen.findByRole('button', { name: 'Analyze lease text instead' }))
 }
 
 describe('Batch 5B navigation and manual entry', () => {
@@ -251,12 +256,34 @@ describe('financial results, stress, and comparison', () => {
       stressed: { month_by_month: [], financial_resilience: {}, known_departure_cash_impact: 0, specified_remaining_rent: 0, prepaid_rent_credit_applied: 0, continuing_rent_cash_due_after_prepaid_credit: 0 },
       summary: { unknown_cost_categories: ['early_departure_consequences', 'remaining_rent_obligation'] },
       warnings: [], explanation: 'This is an explicit settlement scenario.', result_is_hypothetical_not_a_forecast: true,
+      interpretation: { source: 'deterministic' as const, headline: 'Early departure scenario', what_changed: 'The scenario assumes departure after month 8.', main_consequence: 'Known modeled departure cash impact is $0; this may be incomplete.', why_it_matters: 'The result includes only entered amounts.', what_to_watch: 'Future obligations remain unknown.', what_to_consider: 'Review the written terms.' },
     }
     render(<RentalStressPanel offer={demoOffers[0]} busy={false} error={null} result={result} onRun={vi.fn()}/> )
     expect(screen.getByText(/No legal or contractual outcome has been entered/)).toBeInTheDocument()
     expect(screen.getByText('Future rent and legal consequences').parentElement).toHaveTextContent('Unknown')
     expect(screen.getByText(/Continuing rent cash due is unknown/)).toBeInTheDocument()
     expect(screen.queryByText(/Continuing rent cash due after credit: \$0/)).not.toBeInTheDocument()
+  })
+  it('shows deterministic meaning without AI and requests a grounded explanation only on explicit action', async () => {
+    const scenario: StressScenario = { type: 'utility_increase', additional_monthly_amount: 100, first_affected_month: 1, last_affected_month: 2 }
+    const result = {
+      scenario_type: 'utility_increase' as const, assumptions: {}, affected_months: [1, 2], baseline: evaluation,
+      stressed: { month_by_month: [], financial_resilience: {} }, summary: { total_additional_personal_cash_burden: 200 },
+      warnings: [], explanation: 'Hypothetical scenario.', result_is_hypothetical_not_a_forecast: true,
+      interpretation: { source: 'deterministic' as const, headline: 'Utility increase scenario', what_changed: 'Adds $100/month for two months.', main_consequence: 'Modeled added burden is $200.', why_it_matters: 'It uses more of your budget.', what_to_watch: 'The increase is hypothetical.', what_to_consider: 'Check your budget.' },
+    }
+    const fetchMock = vi.fn().mockResolvedValue(jsonResponse({ source: 'gemini', headline: 'Utility increase scenario', what_changed: 'Adds $100/month for two months.', main_consequence: 'Modeled added burden is $200.', why_it_matters: 'It uses more of your budget.', what_to_watch: 'The increase is hypothetical.', what_to_consider: 'Check your budget.', statement_ids: ['scenario', 'utility', 'burden', 'budget', 'assumption', 'action'] }))
+    vi.stubGlobal('fetch', fetchMock)
+    render(<RentalStressPanel offer={demoOffers[0]} status={{ configured: true, model: 'test', service_ready: true }} scenario={scenario} busy={false} error={null} result={result} onRun={vi.fn()}/> )
+    expect(screen.getByRole('region', { name: 'What this scenario means' })).toHaveTextContent('Adds $100/month for two months.')
+    const action = screen.getByRole('button', { name: 'Explain this scenario with AI' })
+    action.focus()
+    expect(document.activeElement).toBe(action)
+    expect(fetchMock).not.toHaveBeenCalled()
+    fireEvent.click(action)
+    expect(await screen.findByText('AI-prioritized interpretation')).toBeInTheDocument()
+    expect(fetchMock).toHaveBeenCalledTimes(1)
+    expect(String(fetchMock.mock.calls[0][0])).toBe('/api/rental/stress-explanation')
   })
   it('compares two saved offers using the API response and flags unequal terms', async () => {
     const result = { left: evaluation, right: { ...evaluation, rental_label: 'Synthetic B' }, differences: { left_minus_right: { base_rent_per_month: -150 }, lease_terms_differ: true, total_period_costs_directly_comparable: false, unknown_cost_categories: { left: [], right: [] } }, comparison_notes: ['Lease durations differ.'], method: 'Shared profile.' }
@@ -299,7 +326,7 @@ describe('financial results, stress, and comparison', () => {
     })
     vi.stubGlobal('fetch', mocked)
     render(<RentalWorkspace view="analyze" onNavigate={vi.fn()}/>)
-    fireEvent.click(screen.getByRole('button', { name: /Analyze lease text with AI/ }))
+    await openLeaseInput()
     fireEvent.change(screen.getByLabelText('Lease provisions'), { target: { value: 'SYNTHETIC LEASE' } })
     fireEvent.click(screen.getByRole('button', { name: 'Extract lease terms' }))
     expect(await screen.findByText("Here's what we found in your lease.")).toBeInTheDocument()
@@ -316,9 +343,9 @@ describe('financial results, stress, and comparison', () => {
     expect(JSON.stringify(confirmBody)).not.toContain('SYNTHETIC LEASE')
   })
   it('enters the chosen AI method directly and switches through a compact action', async () => {
-    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(jsonResponse({ configured: false, service_ready: false, model: 'synthetic-test' })))
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(jsonResponse({ configured: true, service_ready: true, model: 'synthetic-test' })))
     render(<RentalWorkspace view="analyze" onNavigate={vi.fn()}/> )
-    fireEvent.click(screen.getByRole('button', { name: /Analyze lease text with AI/ }))
+    await openLeaseInput()
     expect(await screen.findByLabelText('Lease document input')).toBeInTheDocument()
     expect(screen.queryByRole('button', { name: /No lease needed/ })).not.toBeInTheDocument()
     expect(screen.getByRole('button', { name: 'Switch to guided analysis' })).toBeInTheDocument()
@@ -330,17 +357,16 @@ describe('financial results, stress, and comparison', () => {
 })
 
 describe('Batch 6A Analyze workflow', () => {
-  it('shows three starting choices and keeps finances out of the welcome screen', () => {
+  it('shows one primary starting path and keeps finances out of the welcome screen', () => {
     render(<RentalWorkspace view="analyze" onNavigate={vi.fn()}/> )
-    expect(screen.getByRole('heading', { name: 'Understand what this rental will really cost.' })).toBeInTheDocument()
-    const aiChoice = screen.getByRole('button', { name: /Analyze lease text with AI/ })
-    expect(aiChoice).toBeInTheDocument()
-    expect(screen.getByRole('button', { name: /Start guided analysis/ })).toBeInTheDocument()
-    expect(screen.getByRole('button', { name: /Try a sample rental/ })).toBeInTheDocument()
+    expect(screen.getByRole('heading', { name: 'Know what your rental will really cost.' })).toBeInTheDocument()
+    const primary = screen.getByRole('button', { name: /Start rental analysis/ })
+    expect(screen.queryByRole('button', { name: /Analyze lease text with AI/ })).not.toBeInTheDocument()
+    expect(screen.getByRole('button', { name: /Try with example data/ })).toBeInTheDocument()
     expect(screen.queryByLabelText('Financial profile')).not.toBeInTheDocument()
     expect(screen.queryByLabelText('Manual rental details')).not.toBeInTheDocument()
-    aiChoice.focus()
-    expect(document.activeElement).toBe(aiChoice)
+    primary.focus()
+    expect(document.activeElement).toBe(primary)
   })
 
   it('uses the guided sample to reach a labeled synthetic result and comparison actions', async () => {
@@ -411,7 +437,7 @@ describe('Batch 6A Analyze workflow', () => {
     })
     vi.stubGlobal('fetch', mocked)
     render(<RentalWorkspace view="analyze" onNavigate={vi.fn()}/> )
-    fireEvent.click(screen.getByRole('button', { name: /Analyze lease text with AI/ }))
+    await openLeaseInput()
     fireEvent.change(screen.getByLabelText('Lease provisions'), { target: { value: 'SYNTHETIC PRESERVED TEXT' } })
     fireEvent.click(screen.getByRole('button', { name: 'Extract lease terms' }))
     expect(await screen.findByText("Here's what we found in your lease.")).toBeInTheDocument()
@@ -431,9 +457,9 @@ describe('Batch 6A Analyze workflow', () => {
     const rendered = render(view('analyze'))
     expect(await openSampleResult()).toBeInTheDocument()
     fireEvent.click(screen.getByRole('button', { name: 'Save as Rental A to compare' }))
-    expect(screen.getByRole('status')).toHaveTextContent('Saved to Rental A')
+    expect(screen.getByText(/Saved to Rental A/)).toHaveAttribute('role', 'status')
     fireEvent.click(screen.getByRole('button', { name: 'Start another' }))
-    fireEvent.click(screen.getByRole('button', { name: /Start guided analysis/ }))
+    fireEvent.click(screen.getByRole('button', { name: /Start rental analysis/ }))
     fireEvent.click(screen.getByRole('button', { name: 'Use the detailed manual form instead' }))
     expect(screen.getByLabelText('Rental name')).toHaveValue('')
     expect(screen.getByLabelText('Advertised monthly rent')).toHaveValue(null)
@@ -458,10 +484,10 @@ describe('Batch 6A Analyze workflow', () => {
 
   it('retains detailed manual input behind the guided path', () => {
     render(<RentalWorkspace view="analyze" onNavigate={vi.fn()}/> )
-    fireEvent.click(screen.getByRole('button', { name: /Start guided analysis/ }))
+    fireEvent.click(screen.getByRole('button', { name: /Start rental analysis/ }))
     fireEvent.click(screen.getByRole('button', { name: 'Use the detailed manual form instead' }))
     expect(screen.getByLabelText('Manual rental details')).toBeInTheDocument()
-    expect(screen.getByRole('button', { name: 'Analyze lease text instead' })).toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: 'Analyze lease text instead' })).not.toBeInTheDocument()
     expect(screen.queryByRole('button', { name: /No lease needed/ })).not.toBeInTheDocument()
   })
 })

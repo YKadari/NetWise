@@ -1,5 +1,5 @@
 import { ApiError } from './api'
-import type { FinancialProfile, LeaseConfirmation, LeaseDraft, LeaseServiceStatus, RentalComparison, RentalEvaluation, RentalOffer, ReviewDecision, StressResult, StressScenario } from '../types/rental'
+import type { FinancialProfile, LeaseConfirmation, LeaseDraft, LeaseServiceStatus, RentalComparison, RentalDecisionBrief, RentalEvaluation, RentalFollowUpResponse, RentalOffer, ReviewDecision, StressAiInterpretation, StressResult, StressScenario } from '../types/rental'
 
 const messages: Record<number, string> = {
   413: 'The PDF exceeds the 10 MB limit. Choose a smaller file.',
@@ -28,6 +28,29 @@ async function rentalRequest<T>(path: string, options: RequestInit = {}): Promis
           ? 'Paste some lease text to review, or enter the rental terms manually.'
           : 'Some reviewed terms could not be added to the rental. Check the values and try again.'
       : detail
+    if (path === '/rental/decision-brief') {
+      const briefMessage: Record<number, string> = {
+        422: 'Check the rental terms and recalculate before requesting AI insights.',
+        429: 'AI insights have reached their request limit. Your rental overview remains available.',
+        502: 'AI insights could not be verified. Your rental overview remains available.',
+        503: 'AI insights are unavailable here. Your rental overview remains available.',
+        504: 'AI insights took too long. Your rental overview remains available.',
+      }
+      throw new ApiError(briefMessage[response.status] || 'AI insights are unavailable. Your rental overview remains available.', response.status)
+    }
+    if (path === '/rental/stress-explanation') {
+      const aiMessage: Record<number, string> = {
+        422: 'This stress scenario could not be evaluated. Check its assumptions and run it again.',
+        429: 'AI explanations have reached their request limit. The deterministic interpretation remains available.',
+        502: 'The AI explanation could not be verified. The deterministic interpretation remains available.',
+        503: 'AI explanations are unavailable here. The deterministic interpretation remains available.',
+        504: 'The AI explanation took too long. The deterministic interpretation remains available.',
+      }
+      throw new ApiError(aiMessage[response.status] || 'AI explanations are unavailable. The deterministic interpretation remains available.', response.status)
+    }
+    if (path === '/rental/follow-ups') {
+      throw new ApiError('Suggested questions could not be refreshed. Recalculate the rental terms to try again.', response.status)
+    }
     throw new ApiError(messages[response.status] || safeDetail || `Request failed (${response.status}).`, response.status)
   }
   try { return await response.json() as T }
@@ -123,6 +146,22 @@ export async function evaluateRental(offer: RentalOffer, financial_profile?: Fin
   return result
 }
 
+export async function generateRentalDecisionBrief(offer: RentalOffer, financial_profile?: FinancialProfile, signal?: AbortSignal): Promise<RentalDecisionBrief> {
+  const result = await rentalRequest<RentalDecisionBrief>('/rental/decision-brief', { ...json({ offer, financial_profile }), signal })
+    if (result.source !== 'gemini' || !result.headline || !result.overall_summary || !Array.isArray(result.important_findings) || !Array.isArray(result.key_uncertainties) || !result.suggested_next_step || !Array.isArray(result.follow_ups) || !Array.isArray(result.additional_follow_ups)) {
+    throw new ApiError('AI insights could not be verified. Your rental overview remains available.')
+  }
+  return result
+}
+
+export async function getRentalFollowUps(offer: RentalOffer, financial_profile?: FinancialProfile, signal?: AbortSignal): Promise<RentalFollowUpResponse> {
+  const result = await rentalRequest<RentalFollowUpResponse>('/rental/follow-ups', { ...json({ offer, financial_profile }), signal })
+  if (result.source !== 'deterministic' || !Array.isArray(result.follow_ups) || !Array.isArray(result.additional_follow_ups)) {
+    throw new ApiError('Suggested questions could not be verified.')
+  }
+  return result
+}
+
 export async function compareRentals(left_offer: RentalOffer, right_offer: RentalOffer, financial_profile?: FinancialProfile): Promise<RentalComparison> {
   const result = await rentalRequest<RentalComparison>('/rental/compare', json({ left_offer, right_offer, financial_profile }))
   if (!result.left?.monthly_costs || !result.right?.monthly_costs || !result.differences?.left_minus_right) throw new ApiError('The rental comparison is incomplete.')
@@ -132,5 +171,11 @@ export async function compareRentals(left_offer: RentalOffer, right_offer: Renta
 export async function stressRental(offer: RentalOffer, scenario: StressScenario, financial_profile?: FinancialProfile): Promise<StressResult> {
   const result = await rentalRequest<StressResult>('/rental/stress-test', json({ offer, scenario, financial_profile }))
   if (!result.baseline || !result.stressed || !result.summary || !Array.isArray(result.affected_months)) throw new ApiError('The stress result is incomplete.')
+  return result
+}
+
+export async function explainStress(offer: RentalOffer, scenario: StressScenario, financial_profile?: FinancialProfile, signal?: AbortSignal): Promise<StressAiInterpretation> {
+  const result = await rentalRequest<StressAiInterpretation>('/rental/stress-explanation', { ...json({ offer, scenario, financial_profile }), signal })
+  if (result.source !== 'gemini' || !result.headline || !result.main_consequence || !Array.isArray(result.statement_ids)) throw new ApiError('The AI scenario explanation is incomplete.')
   return result
 }
