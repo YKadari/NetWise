@@ -1,6 +1,6 @@
 import { useMemo, useState, type FormEvent } from 'react'
 import { money } from '../lib/rentalForms'
-import { buildReviewDecisions, chargeLines, findTerm, formatCandidateValue, initialReviewSummary, likelyUtilityDuplicate, validateReviewSummary, type ReviewEdit, type ReviewSummary } from '../lib/leaseReview'
+import { acceptedShape, buildReviewDecisions, chargeLines, financialSummaryFields, findTerm, formatCandidateValue, initialReviewSummary, likelyUtilityDuplicate, validateReviewSummary, type ReviewEdit, type ReviewSummary } from '../lib/leaseReview'
 import type { CandidateTerm, LeaseDraft, LeaseFieldId, ReviewDecision } from '../types/rental'
 import { LeaseEvidenceDisclosure } from './LeaseEvidenceDisclosure'
 
@@ -32,13 +32,14 @@ const chargeFields = new Set<LeaseFieldId>(['recurring_charges', 'nonrefundable_
 const noneStatusField: Partial<Record<LeaseFieldId, LeaseFieldId>> = {
   recurring_charges: 'recurring_charges_status', nonrefundable_fees: 'nonrefundable_fees_status', other_charges: 'other_charges_status',
 }
-const safeEvidence = (term: CandidateTerm | undefined) => term ? <LeaseEvidenceDisclosure term={term}/> : null
+const safeEvidence = (term: CandidateTerm | undefined) => term && term.status !== 'not_found' ? <LeaseEvidenceDisclosure term={term}/> : null
 
 function termValue(term: CandidateTerm | undefined): string {
   if (!term || term.status !== 'explicit') return 'Not confirmed'
   if (term.field_id === 'lease_term_months') return typeof term.value === 'number' ? `${term.value} months` : formatCandidateValue(term.value)
   if (term.field_id === 'monthly_base_rent' || term.field_id === 'security_deposit' || term.field_id === 'lease_break_fee') return typeof term.value === 'number' ? money(term.value) : formatCandidateValue(term.value)
-  if ((term.field_id === 'first_month_rent_due_upfront' || term.field_id === 'last_month_rent_due_upfront') && typeof term.value === 'boolean') return term.value ? 'Due before move-in' : 'Not due before move-in'
+  if (term.field_id === 'first_month_rent_due_upfront' || term.field_id === 'last_month_rent_due_upfront') return term.value === true || term.value === 'yes' ? 'Due before move-in' : term.value === false || term.value === 'no' ? 'Not due before move-in' : 'Not confirmed'
+  if (term.field_id === 'concessions' && Array.isArray(term.value)) return term.value.map(item => item && typeof item === 'object' ? `${item.kind === 'free_rent_month' ? 'Free rent' : 'Rent credit'} in month ${item.month ?? '?'}${typeof item.amount === 'number' ? `: ${money(item.amount)}` : ''}` : 'Discount needs review').join('; ') || 'No discounts identified'
   return formatCandidateValue(term.value)
 }
 
@@ -49,35 +50,13 @@ function chargeText(term: CandidateTerm | undefined, monthly = false): string {
   return lines.map(line => `${line.name}${line.amount === null ? '' : ` — ${money(line.amount)}${monthly ? ' / month' : ''}`}${line.detail ? ` (${line.detail})` : ''}`).join('; ')
 }
 
-function editorText(term: CandidateTerm | undefined, field: LeaseFieldId): string {
-  const lines = chargeLines(term?.value)
-  if (!lines.length) return ''
-  return lines.map(line => `${line.name} | ${line.amount ?? ''}${field === 'other_charges' ? ` | ${line.detail?.includes('refundable') ? line.detail : 'nonrefundable'}` : ''}`).join('\n')
-}
-
-function parseChargeCorrection(field: LeaseFieldId, raw: string): unknown[] {
-  if (!raw.trim()) return []
-  return raw.split(/\r?\n/).map((line, index) => {
-    const [rawName, rawAmount, rawRefundable] = line.split('|').map(value => value.trim())
-    const amount = Number(rawAmount?.replace(/[$,\s]/g, ''))
-    if (!rawName || !rawAmount || !Number.isFinite(amount) || amount <= 0) throw new Error(`Check charge line ${index + 1}. Enter a fee amount above $0.`)
-    if (field === 'recurring_charges') return { name: rawName, monthly_amount: amount }
-    return { name: rawName, amount, refundable: field === 'other_charges' && rawRefundable?.toLowerCase() === 'refundable' }
-  })
-}
-
-function EvidenceRow({ label, term, value }: { label: string; term?: CandidateTerm; value: string }) {
-  return <div className="border-b border-line py-3 last:border-0">
-    <div className="flex flex-wrap items-baseline justify-between gap-x-4 gap-y-1"><dt className="text-sm text-muted">{label}</dt><dd className="text-right text-sm font-semibold text-ink">{value}</dd></div>
-    {term && (term.status === 'ambiguous' || term.status === 'contradictory') && <p className="mt-1 text-xs text-amber-900">The lease wording was unclear, so we left this unconfirmed.{term.uncertainty_note ? ` ${term.uncertainty_note}` : ''}</p>}
-    {safeEvidence(term)}
-  </div>
-}
+type FeeEdit = { name: string; amount: string; refundable: string }
 
 export function LeaseReview({ draft, busy, error, onConfirm, onBack }: Props) {
   const [summary, setSummary] = useState<ReviewSummary>(() => initialReviewSummary(draft))
   const [openEditor, setOpenEditor] = useState<LeaseFieldId | null>(null)
-  const [chargeDraft, setChargeDraft] = useState('')
+  const [feeEdits, setFeeEdits] = useState<FeeEdit[]>([])
+  const [discountEdits, setDiscountEdits] = useState<{ kind: string; month: string; amount: string }[]>([])
   const [utilityAmount, setUtilityAmount] = useState('')
   const [utilityStatus, setUtilityStatus] = useState<'estimated' | 'included_in_rent'>('estimated')
   const [holdingTreatment, setHoldingTreatment] = useState('credited_to_first_month_rent')
@@ -87,18 +66,27 @@ export function LeaseReview({ draft, busy, error, onConfirm, onBack }: Props) {
   const updateSummary = (patch: Partial<ReviewSummary>) => setSummary(current => ({ ...current, ...patch, ...(('rentalName' in patch || 'monthlyRent' in patch || 'leaseMonths' in patch) ? { checked: false } : {}) }))
   const setEdit = (field: LeaseFieldId, edit: ReviewEdit) => setSummary(current => ({ ...current, checked: ['rental_label', 'monthly_base_rent', 'lease_term_months', 'lease_break_fee', 'security_deposit', 'holding_deposit', 'holding_deposit_status', 'first_month_rent_due_upfront', 'last_month_rent_due_upfront', 'nonrefundable_fees', 'nonrefundable_fees_status', 'other_charges', 'other_charges_status', 'recurring_charges', 'recurring_charges_status', 'utilities', 'concessions'].includes(field) ? false : current.checked, edits: { ...current.edits, [field]: edit } }))
   const open = (field: LeaseFieldId) => {
-    const term = findTerm(draft, field)
+    const original = findTerm(draft, field)
+    const edit = summary.edits[field]
+    const term = edit?.action === 'correct' ? { ...original, value: edit.value } : original
     setOpenEditor(field)
-    setChargeDraft(editorText(term, field))
+    const sourceEntries = Array.isArray(term?.value) ? term.value : []
+    setFeeEdits(chargeLines(term?.value).map((line, index) => ({ name: line.name.startsWith('Unnamed fee') ? '' : line.name, amount: line.amount === null ? '' : String(line.amount), refundable: sourceEntries[index]?.refundable === true ? 'yes' : sourceEntries[index]?.refundable === false ? 'no' : '' })))
+    setDiscountEdits(sourceEntries.map(item => ({ kind: item?.kind || 'rent_credit', month: String(item?.month ?? ''), amount: String(item?.amount ?? '') })))
     const utility = term?.value && typeof term.value === 'object' && !Array.isArray(term.value) ? term.value as Record<string, unknown> : null
     setUtilityStatus(utility?.status === 'included_in_rent' ? 'included_in_rent' : 'estimated')
     const utilityValue = utility?.amount ?? utility?.estimated_monthly_amount ?? (typeof term?.value === 'number' ? term.value : undefined)
-    setUtilityAmount(typeof utilityValue === 'number' ? String(utilityValue) : '')
+    setUtilityAmount(typeof utilityValue === 'number' ? String(utilityValue) : typeof term?.value === 'string' ? term.value : '')
     const holding = term?.value && typeof term.value === 'object' && !Array.isArray(term.value) ? term.value as Record<string, unknown> : null
     setHoldingTreatment(typeof holding?.treatment === 'string' ? holding.treatment : 'credited_to_first_month_rent')
   }
   const applyChargeEdit = (field: LeaseFieldId) => {
-    try { setEdit(field, { action: 'correct', value: parseChargeCorrection(field, chargeDraft) }); setLocalError(null); setOpenEditor(null) }
+    try { setEdit(field, { action: 'correct', value: feeEdits.map((fee, index) => {
+      const amount = Number(fee.amount)
+      if (!fee.name.trim() || !fee.amount.trim() || !Number.isFinite(amount) || amount <= 0) throw new Error(`Enter a name and positive amount for fee ${index + 1}.`)
+      if (field === 'other_charges' && !fee.refundable) throw new Error(`Confirm whether ${fee.name} is refundable, or leave it unconfirmed.`)
+      return field === 'recurring_charges' ? { name: fee.name.trim(), monthly_amount: amount } : { name: fee.name.trim(), amount, refundable: field === 'other_charges' && fee.refundable === 'yes' }
+    }) }); setLocalError(null); setOpenEditor(null) }
     catch (cause) { setLocalError(cause instanceof Error ? cause.message : 'Check the charge details.') }
   }
   const markNoCharges = (field: LeaseFieldId) => {
@@ -115,8 +103,28 @@ export function LeaseReview({ draft, busy, error, onConfirm, onBack }: Props) {
   }
 
   const simpleEditor = (term: CandidateTerm, field: LeaseFieldId) => {
+    if (field === 'concessions') return <div className="mt-3 space-y-2">
+      {discountEdits.map((discount, index) => <div key={index} className="grid gap-2 rounded-lg border border-line p-3 sm:grid-cols-3">
+        <label className="label">Discount type<select className="field mt-1" value={discount.kind} onChange={event => setDiscountEdits(current => current.map((item, i) => i === index ? { ...item, kind: event.target.value } : item))}><option value="rent_credit">Rent credit</option><option value="free_rent_month">Free rent month</option><option value="promotional_credit">Promotional credit</option></select></label>
+        <label className="label">Lease month<input className="field mt-1" type="number" min="1" max={summary.leaseMonths || 120} value={discount.month} onChange={event => setDiscountEdits(current => current.map((item, i) => i === index ? { ...item, month: event.target.value } : item))}/></label>
+        {discount.kind !== 'free_rent_month' && <label className="label">Credit amount<input className="field mt-1" type="number" min="0.01" step="0.01" value={discount.amount} onChange={event => setDiscountEdits(current => current.map((item, i) => i === index ? { ...item, amount: event.target.value } : item))}/></label>}
+        <button type="button" className="min-h-11 text-sm text-forest underline" onClick={() => setDiscountEdits(current => current.filter((_, i) => i !== index))}>Remove discount</button>
+      </div>)}
+      <button type="button" className="min-h-11 px-3 text-sm font-bold text-forest underline" onClick={() => setDiscountEdits(current => [...current, { kind: 'rent_credit', month: '', amount: '' }])}>Add a discount</button>
+      <button type="button" className="min-h-11 rounded-lg bg-forest px-3 text-sm font-bold text-white" onClick={() => {
+        if (discountEdits.some(item => !/^\d+$/.test(item.month) || Number(item.month) < 1 || Number(item.month) > Number(summary.leaseMonths) || item.kind !== 'free_rent_month' && (!item.amount.trim() || !Number.isFinite(Number(item.amount)) || Number(item.amount) <= 0))) { setLocalError('Enter a valid lease month and credit amount.'); return }
+        setEdit(field, { action: 'correct', value: discountEdits.map(item => ({ kind: item.kind, month: Number(item.month), ...(item.kind === 'free_rent_month' ? {} : { amount: Number(item.amount) }) })) }); setOpenEditor(null)
+      }}>Save discounts</button>
+    </div>
     if (chargeFields.has(field)) return <div className="mt-3 space-y-2">
-      <label className="label">One charge per line: name | amount{field === 'other_charges' ? ' | refundable or nonrefundable' : ''}<textarea className="field mt-1 min-h-24" value={chargeDraft} onChange={event => setChargeDraft(event.target.value)} placeholder={field === 'recurring_charges' ? 'Internet | 40\nParking | 100' : 'Application fee | 100'}/></label>
+      <p className="text-xs text-muted">Include only fees you are required to pay. Keep uncertain charges unconfirmed.</p>
+      {feeEdits.map((fee, index) => <div key={index} className="grid gap-2 rounded-lg border border-line p-3 sm:grid-cols-2">
+        <label className="label">Fee name<input aria-label={`Fee name ${index + 1}`} className="field mt-1" value={fee.name} onChange={event => setFeeEdits(current => current.map((item, i) => i === index ? { ...item, name: event.target.value } : item))}/></label>
+        <label className="label">{field === 'recurring_charges' ? 'Monthly amount' : 'Amount'}<input aria-label={`Fee amount ${index + 1}`} className="field mt-1" type="number" min="0.01" step="0.01" value={fee.amount} onChange={event => setFeeEdits(current => current.map((item, i) => i === index ? { ...item, amount: event.target.value } : item))}/></label>
+        {field === 'other_charges' && <label className="label">Can it be refunded?<select aria-label={`Refund terms for fee ${index + 1}`} className="field mt-1" value={fee.refundable} onChange={event => setFeeEdits(current => current.map((item, i) => i === index ? { ...item, refundable: event.target.value } : item))}><option value="">Not confirmed</option><option value="yes">Refundable</option><option value="no">Nonrefundable</option></select></label>}
+        <button type="button" className="min-h-11 text-left text-sm font-bold text-forest underline" aria-label={`Remove ${fee.name || 'unnamed fee'}`} onClick={() => setFeeEdits(current => current.filter((_, i) => i !== index))}>Remove fee</button>
+      </div>)}
+      <button type="button" className="min-h-11 text-sm font-bold text-forest underline" onClick={() => setFeeEdits(current => [...current, { name: '', amount: '', refundable: '' }])}>Add a fee</button>
       <div className="flex flex-wrap gap-2"><button type="button" className="rounded-lg bg-forest px-3 py-2 text-sm font-bold text-white" onClick={() => applyChargeEdit(field)}>Save corrected charges</button><button type="button" className="rounded-lg border border-line px-3 py-2 text-sm font-semibold" onClick={() => markNoCharges(field)}>Confirm none apply</button></div>
     </div>
     if (field === 'utilities') return <div className="mt-3 grid gap-2 sm:grid-cols-2">
@@ -137,59 +145,90 @@ export function LeaseReview({ draft, busy, error, onConfirm, onBack }: Props) {
   const editableFinancial = (field: LeaseFieldId, label: string) => {
     const term = findTerm(draft, field)
     const edit = summary.edits[field]
-    let value = edit?.action === 'mark_unknown' ? 'Not confirmed' : edit?.action === 'confirm_none' ? 'Confirmed none' : edit?.action === 'correct' ? formatCandidateValue(edit.value) : termValue(term)
-    if (field === 'recurring_charges') value = edit?.action === 'correct' ? chargeText({ ...(term || { field_id: field, status: 'explicit', value: null, source_excerpt: null, page_reference: null, uncertainty_note: null, evidence_verification: 'missing', review_state: 'needs_review' }), value: edit.value, status: 'explicit' }, true) : chargeText(term, true)
-    if (field === 'nonrefundable_fees' || field === 'other_charges') value = edit?.action === 'correct' ? chargeText({ ...(term || { field_id: field, status: 'explicit', value: null, source_excerpt: null, page_reference: null, uncertainty_note: null, evidence_verification: 'missing', review_state: 'needs_review' }), value: edit.value, status: 'explicit' }) : chargeText(term)
-    if (field === 'utilities' && edit?.action === 'correct') value = formatCandidateValue(edit.value)
-    if (field === 'first_month_rent_due_upfront' || field === 'last_month_rent_due_upfront') value = edit?.action === 'correct' ? (edit.value === 'yes' ? 'Due before move-in' : edit.value === 'no' ? 'Not due before move-in' : 'Not confirmed') : termValue(term)
+    const fallback: CandidateTerm = { field_id: field, value: null, status: 'not_found', source_excerpt: null, page_reference: null, uncertainty_note: null, evidence_verification: 'missing', review_state: 'needs_review' }
+    const effective = edit?.action === 'correct' ? { ...(term || fallback), status: 'explicit' as const, value: edit.value } : term
+    let value = termValue(effective)
+    if (chargeFields.has(field)) value = chargeText(effective, field === 'recurring_charges')
+    if (edit?.action === 'mark_unknown') value = 'Not confirmed'
+    if (edit?.action === 'confirm_none') value = 'Confirmed none'
+    const unclear = term?.status === 'ambiguous' || term?.status === 'contradictory'
+    const incompatible = effective?.status === 'explicit' && !acceptedShape(field, effective.value) && !edit
+    const hiddenOptional = !financialSummaryFields.has(field)
     return <div key={field} className="border-b border-line py-3 last:border-0">
-      <div className="flex flex-wrap items-start justify-between gap-2"><div className="min-w-0 flex-1"><div className="flex flex-wrap items-baseline justify-between gap-x-4"><dt className="text-sm text-muted">{label}</dt><dd className="text-right text-sm font-semibold text-ink">{value}</dd></div>{term && (term.status === 'ambiguous' || term.status === 'contradictory') && <p className="mt-1 text-xs text-amber-900">The lease wording was unclear, so we left this unconfirmed.{term.uncertainty_note ? ` ${term.uncertainty_note}` : ''}</p>}{field.endsWith('_status') && value === 'Not confirmed' && <p className="mt-1 text-xs text-amber-900">We couldn't confirm whether the list is complete.</p>}{safeEvidence(term)}</div>{field.endsWith('_status') ? <button type="button" className="rounded-md px-2 py-1 text-xs font-bold text-forest underline" onClick={() => setEdit(field, { action: 'confirm_none' })}>I've checked this list</button> : <div className="flex gap-2">{field === 'holding_deposit' && <button type="button" className="rounded-md px-2 py-1 text-xs font-bold text-forest underline" onClick={() => { setEdit('holding_deposit', { action: 'confirm_none' }); setEdit('holding_deposit_status', { action: 'confirm_none' }) }}>Confirm no holding deposit</button>}<button type="button" className="rounded-md px-2 py-1 text-xs font-bold text-forest underline" onClick={() => beginEdit(field)}>{edit?.action === 'correct' ? 'Edit' : 'Edit details'}</button></div>}</div>
-      {openEditor === field && <div className="mt-2 rounded-lg border border-line bg-white p-3">{simpleEditor(term || { field_id: field, value: null, status: 'not_found', source_excerpt: null, page_reference: null, uncertainty_note: null, evidence_verification: 'missing', review_state: 'needs_review' }, field)}<div className="mt-2 flex flex-wrap gap-2"><button type="button" className="rounded-lg border border-line px-3 py-2 text-sm font-semibold" onClick={() => { setEdit(field, { action: 'mark_unknown' }); setOpenEditor(null) }}>Leave unconfirmed</button>{field === 'security_deposit' && <button type="button" className="rounded-lg border border-line px-3 py-2 text-sm font-semibold" onClick={() => { setEdit(field, { action: 'confirm_none' }); setOpenEditor(null) }}>Confirm no deposit</button>}</div></div>}
-      {field === 'recurring_charges' && duplicateUtilities.length > 0 && !summary.edits.recurring_charges && <div className="mt-2 rounded-lg border border-amber-300 bg-amber-50 p-3 text-sm text-amber-950"><strong>Check for a duplicate:</strong> “{duplicateUtilities.join(', ')}” may also be counted under Utilities. Choose whether these are separate costs, or edit the fee list to remove the repeated item before confirming.<div className="mt-2 flex flex-wrap gap-2"><button type="button" className="rounded-lg border border-amber-700 px-3 py-2 text-sm font-semibold" onClick={() => setEdit('recurring_charges', { action: 'accept' })}>These are separate costs</button><button type="button" className="rounded-lg border border-amber-700 px-3 py-2 text-sm font-semibold" onClick={() => beginEdit('recurring_charges')}>Edit the fee list</button></div></div>}
+      <div className="flex items-start justify-between gap-3">
+        <div className="min-w-0 flex-1"><dt className="text-sm text-muted">{label}</dt><dd className="mt-1 break-words text-sm font-semibold text-ink">{value}</dd>
+          {field === 'utilities' && effective?.status === 'explicit' && value !== 'Included in rent' && <p className="mt-1 text-xs text-muted">Estimate only; actual bills can vary.</p>}
+          {field === 'security_deposit' && value !== 'Confirmed none' && <p className="mt-1 text-xs text-muted">Refund terms are not separately confirmed. Check the source for conditions; deposits are kept separate from expenses.</p>}
+          {unclear && !edit && <p className="mt-1 text-xs font-semibold text-amber-900">{term?.status === 'contradictory' ? 'Conflicting wording' : 'Unclear wording'} — left unconfirmed.</p>}
+          {incompatible && <p className="mt-1 text-xs text-amber-900">These details need correction before they can be included in your calculation.</p>}
+          {term?.status === 'explicit' && term.evidence_verification !== 'verified_text' && term.evidence_verification !== 'verified_page' && !edit && <p className="mt-1 text-xs text-amber-900">Source not verified — check your lease.</p>}
+          {hiddenOptional && !edit && <p className="mt-1 text-xs text-muted">Not included unless you review it here.</p>}
+          {safeEvidence(term)}
+        </div>
+        <button type="button" aria-label={`Edit ${label.toLowerCase()}`} aria-expanded={openEditor === field} className="min-h-11 shrink-0 rounded px-2 text-sm font-bold text-forest underline" onClick={() => beginEdit(field)}>Edit</button>
+      </div>
+      {hiddenOptional && term?.status === 'explicit' && acceptedShape(field, term.value) && !edit && <button type="button" className="min-h-11 rounded text-sm font-bold text-forest underline" onClick={() => setEdit(field, { action: 'accept' })}>I've checked these details; include them</button>}
+      {openEditor === field && <div className="mt-2 rounded-lg border border-line bg-white p-3">{simpleEditor(effective || fallback, field)}<div className="mt-2 flex flex-wrap gap-2">
+        <button type="button" className="min-h-11 rounded-lg border border-line px-3 text-sm font-semibold" onClick={() => { setEdit(field, { action: 'mark_unknown' }); setOpenEditor(null) }}>Leave unconfirmed</button>
+        {field === 'security_deposit' && <button type="button" className="min-h-11 rounded-lg border border-line px-3 text-sm font-semibold" onClick={() => { setEdit(field, { action: 'confirm_none' }); setOpenEditor(null) }}>Confirm no deposit</button>}
+        <button type="button" className="min-h-11 rounded-lg px-3 text-sm underline" onClick={() => setOpenEditor(null)}>Cancel edit</button>
+      </div></div>}
+      {field === 'recurring_charges' && duplicateUtilities.length > 0 && !summary.edits.recurring_charges && <div className="mt-2 rounded-lg border border-amber-300 bg-amber-50 p-3 text-sm text-amber-950"><strong>Check for a duplicate:</strong> {duplicateUtilities.join(', ')} may also be counted under Utilities. Confirm these are separate costs or remove the repeated fee.<div className="mt-2 flex flex-wrap gap-2"><button type="button" className="min-h-11 rounded-lg border border-amber-700 px-3 text-sm font-semibold" onClick={() => setEdit('recurring_charges', { action: 'accept' })}>These are separate costs</button><button type="button" className="min-h-11 rounded-lg border border-amber-700 px-3 text-sm font-semibold" onClick={() => beginEdit('recurring_charges')}>Edit monthly fees</button></div></div>}
     </div>
   }
 
-  const clauseCards = draft.terms.filter(term => ['early_termination', 'lease_break_fee', 'notice_requirements', 'renewal_or_rent_change', 'late_payment_fees', 'roommate_liability', 'conditional_concessions'].includes(term.field_id))
-  const clauseIds = new Set(clauseCards.map(term => term.field_id))
-  const missingClauseIds: LeaseFieldId[] = ['early_termination', 'lease_break_fee', 'notice_requirements', 'renewal_or_rent_change', 'late_payment_fees', 'roommate_liability', 'conditional_concessions'].filter(field => !clauseIds.has(field as LeaseFieldId)) as LeaseFieldId[]
+  const schedules: [LeaseFieldId, string][] = [['recurring_charges_status', 'monthly fees'], ['nonrefundable_fees_status', 'nonrefundable move-in fees'], ['other_charges_status', 'other move-in charges']]
+  const scheduleChecked = (field: LeaseFieldId) => ['confirm_none', 'accept'].includes(summary.edits[field]?.action || '')
+  const questions: string[] = []
+  if (!scheduleChecked('recurring_charges_status')) questions.push('Are there any other required monthly fees, and what do they cover?')
+  if (!scheduleChecked('nonrefundable_fees_status') || !scheduleChecked('other_charges_status')) questions.push('Can I have a complete breakdown of everything due before move-in?')
+  if (summary.edits.security_deposit?.action !== 'confirm_none') questions.push('How much is the security deposit, and when and under what conditions is it refunded?')
+  if (!summary.edits.early_termination || !summary.edits.lease_break_fee) questions.push('What rent, fees, and notice would I owe if I leave early?')
+  const legalFields: LeaseFieldId[] = ['early_termination', 'lease_break_fee', 'notice_requirements', 'renewal_or_rent_change', 'late_payment_fees', 'roommate_liability', 'conditional_concessions']
+  const requiredUnclear = !summary.monthlyRent || !summary.leaseMonths
 
-  return <form onSubmit={submit} className="space-y-5" aria-label="Review lease summary">
-    <header><div className="kicker">Lease review</div><h2 className="mt-1 font-display text-2xl">Here's what we found in your lease.</h2><p className="mt-2 max-w-3xl text-sm leading-relaxed text-muted">We've organized the important costs and conditions. Check the details before we calculate what this rental could cost.</p></header>
-    {draft.general_warnings.length > 0 && <div className="rounded-xl border border-amber-300 bg-amber-50 p-4 text-sm text-amber-950"><strong>Worth a closer look</strong><ul className="mt-2 list-disc space-y-1 pl-5">{draft.general_warnings.map((warning, index) => <li key={index}>{warning}</li>)}</ul></div>}
-
-    <section className="surface p-4 sm:p-5" aria-label="Essential rental details"><h3 className="font-display text-xl">Essential rental details</h3><div className="mt-3 grid gap-3 md:grid-cols-3">
-      <label className="label">Rental name <span className="font-normal text-muted">(just for you)</span><input className="field mt-1" value={summary.rentalName} onChange={event => updateSummary({ rentalName: event.target.value })} maxLength={120} placeholder="e.g. Downtown apartment"/></label>
-      <label className="label">Monthly rent<input className="field mt-1" type="number" min="0.01" step="0.01" inputMode="decimal" value={summary.monthlyRent} onChange={event => updateSummary({ monthlyRent: event.target.value })} placeholder="Enter monthly rent"/></label>
-      <label className="label">Lease duration in months<input className="field mt-1" type="number" min="1" max="120" step="1" inputMode="numeric" value={summary.leaseMonths} onChange={event => updateSummary({ leaseMonths: event.target.value })} placeholder="Enter number of months"/></label>
-    </div><div className="mt-3 grid gap-x-6 md:grid-cols-2">{(['rental_label', 'monthly_base_rent', 'lease_term_months'] as LeaseFieldId[]).map(field => <div key={field} className="text-xs text-muted">{labels[field]}{findTerm(draft, field) ? ` found: ${termValue(findTerm(draft, field))}` : ' was not found in the lease.'}{safeEvidence(findTerm(draft, field))}</div>)}</div></section>
-
-    <section className="surface p-4 sm:p-5" aria-label="Move-in costs"><h3 className="font-display text-xl">Move-in costs</h3><p className="mt-1 text-sm text-muted">These are separate types of payment. The final cash calculation comes from the rental evaluator after review.</p><dl className="mt-2">
-      {editableFinancial('security_deposit', 'Security deposit')}
-      {editableFinancial('holding_deposit', 'Holding deposit')}
-      {editableFinancial('first_month_rent_due_upfront', "First month's rent before move-in")}
-      {editableFinancial('last_month_rent_due_upfront', "Last month's rent before move-in")}
-      {editableFinancial('nonrefundable_fees', 'Application and other nonrefundable fees')}
-      {editableFinancial('nonrefundable_fees_status', 'Nonrefundable fee list')}
-      {editableFinancial('other_charges', 'Other identified move-in charges')}
-      {editableFinancial('other_charges_status', 'Other charge list')}
-    </dl><p className="mt-3 rounded-lg bg-canvas p-3 text-xs text-muted">We don't add a preliminary upfront total here. Prepaid rent, refundable deposits, and nonrefundable fees are handled separately in your final calculation.</p></section>
-
-    <section className="surface p-4 sm:p-5" aria-label="Monthly costs"><h3 className="font-display text-xl">Monthly costs</h3><dl className="mt-2">
-      <EvidenceRow label="Base monthly rent" term={findTerm(draft, 'monthly_base_rent')} value={summary.monthlyRent.trim() ? money(Number(summary.monthlyRent)) : 'Enter monthly rent'} />
-      {editableFinancial('recurring_charges', 'Other recurring fees')}
-      {editableFinancial('recurring_charges_status', 'Monthly fee list')}
-      {editableFinancial('utilities', 'Utilities')}
-      {editableFinancial('concessions', 'Discounts or rent credits')}
-    </dl></section>
-
-    <section className="surface p-4 sm:p-5" aria-label="Things worth checking"><h3 className="font-display text-xl">Things worth checking</h3><p className="mt-1 text-sm text-muted">Missing information stays unconfirmed. It doesn't mean that a fee or condition does not exist.</p><ul className="mt-3 space-y-3">{[...clauseCards.map(term => ({ field: term.field_id, term })), ...missingClauseIds.map(field => ({ field, term: undefined }))].map(({ field, term }) => {
-      const edit = summary.edits[field]
-      const shown = edit?.action === 'accept' ? 'Reviewed from the lease' : edit?.action === 'confirm_none' ? 'You confirmed this does not apply' : edit?.action === 'correct' ? formatCandidateValue(edit.value) : edit?.action === 'mark_unknown' || !term || term.status !== 'explicit' ? (earlyMessages[field] || `We couldn't confirm ${labels[field]?.toLowerCase() || 'this term'}.`) : `Found in lease: ${formatCandidateValue(term.value)} — not confirmed yet.`
-      const mayConfirmNone = field === 'lease_break_fee' || field === 'late_payment_fees' || field === 'conditional_concessions'
-      return <li key={field} className="rounded-xl border border-line bg-white p-3"><div className="flex flex-wrap items-start justify-between gap-2"><div className="min-w-0 flex-1"><h4 className="text-sm font-bold text-ink">{labels[field]}</h4><p className="mt-1 text-sm text-muted">{shown}</p>{term && safeEvidence(term)}</div><div className="flex flex-wrap gap-2">{term?.status === 'explicit' && <button type="button" className="rounded-lg border border-line px-3 py-2 text-xs font-bold text-forest" onClick={() => setEdit(field, { action: 'accept' })}>I checked this clause</button>}{mayConfirmNone && <button type="button" className="rounded-lg border border-line px-3 py-2 text-xs font-semibold" onClick={() => setEdit(field, { action: 'confirm_none' })}>Confirm this doesn't apply</button>}<button type="button" className="rounded-lg border border-line px-3 py-2 text-xs font-semibold" onClick={() => beginEdit(field)}>{field === 'lease_break_fee' ? 'Correct fee' : 'Add or correct detail'}</button>{term?.status === 'explicit' && <button type="button" className="rounded-lg border border-line px-3 py-2 text-xs font-semibold" onClick={() => setEdit(field, { action: 'mark_unknown' })}>Leave unconfirmed</button>}</div></div>{openEditor === field && <div className="mt-2">{simpleEditor(term || { field_id: field, value: null, status: 'not_found', source_excerpt: null, page_reference: null, uncertainty_note: null, evidence_verification: 'missing', review_state: 'needs_review' }, field)}</div>}</li>
-    })}</ul></section>
-
-    <section className="rounded-xl border-2 border-forest bg-[#f4faf6] p-4 sm:p-5"><label className="flex cursor-pointer items-start gap-3 text-sm font-semibold text-ink"><input className="mt-1 h-5 w-5 accent-forest" type="checkbox" checked={summary.checked} onChange={event => updateSummary({ checked: event.target.checked })}/><span>I've checked the rental name, rent, lease duration, and costs shown above against my lease. Any edits I made are correct.</span></label><p role="status" className="mt-2 text-sm text-forest">{readiness || 'Ready to calculate.'}</p></section>
+  return <form onSubmit={submit} className="lease-review space-y-4" aria-label="Review lease summary">
+    <header><div className="kicker">Review your lease</div><h2 className="mt-1 font-display text-2xl">Here's what we found in your lease.</h2><p className="mt-2 text-sm text-muted">Check the costs below. Open a source or edit anything that needs correcting. Missing details stay unconfirmed.</p></header>
+    <section className="surface p-4 sm:p-5" aria-label="Essential rental details">
+      <h3 className="font-display text-xl">{summary.rentalName || 'Your rental'}</h3>
+      <dl className="mt-3 grid grid-cols-2 gap-4">
+        <div><dt className="text-sm text-muted">Monthly base rent</dt><dd className="mt-1 text-2xl font-bold text-ink">{summary.monthlyRent ? money(Number(summary.monthlyRent)) : 'Not confirmed'}</dd>{safeEvidence(findTerm(draft, 'monthly_base_rent'))}</div>
+        <div><dt className="text-sm text-muted">Lease length</dt><dd className="mt-1 text-2xl font-bold text-ink">{summary.leaseMonths ? `${summary.leaseMonths} months` : 'Not confirmed'}</dd>{safeEvidence(findTerm(draft, 'lease_term_months'))}</div>
+      </dl>
+      {(['monthly_base_rent', 'lease_term_months'] as LeaseFieldId[]).some(field => ['ambiguous', 'contradictory'].includes(findTerm(draft, field)?.status || '')) && <p className="mt-2 text-sm text-amber-900">Rent or lease length is unclear. Enter the correct details before continuing.</p>}
+      <details className="mt-2" open={requiredUnclear || undefined}><summary className="w-fit cursor-pointer rounded py-2 text-sm font-bold text-forest underline">Edit rental details</summary><div className="mt-2 grid gap-3 sm:grid-cols-3">
+        <label className="label">Rental name<input className="field mt-1" value={summary.rentalName} onChange={event => updateSummary({ rentalName: event.target.value })} maxLength={120}/></label>
+        <label className="label">Monthly rent<input className="field mt-1" type="number" min="0.01" step="0.01" value={summary.monthlyRent} onChange={event => updateSummary({ monthlyRent: event.target.value })}/></label>
+        <label className="label">Lease duration in months<input className="field mt-1" type="number" min="1" max="120" step="1" value={summary.leaseMonths} onChange={event => updateSummary({ leaseMonths: event.target.value })}/></label>
+      </div>{safeEvidence(findTerm(draft, 'rental_label'))}</details>
+    </section>
+    <div className="grid items-start gap-4 lg:grid-cols-2">
+      <section className="surface p-4 sm:p-5" aria-label="Monthly costs"><h3 className="font-display text-xl">Alongside your rent</h3><dl>{editableFinancial('recurring_charges', 'Monthly fees identified')}{editableFinancial('utilities', 'Utilities')}</dl></section>
+      <section className="surface p-4 sm:p-5" aria-label="Move-in costs"><h3 className="font-display text-xl">Before you move in</h3><dl>
+        {editableFinancial('security_deposit', 'Security deposit')}
+        {editableFinancial('nonrefundable_fees', 'Nonrefundable fees identified')}
+        {(findTerm(draft, 'other_charges')?.status === 'explicit' || summary.edits.other_charges) && editableFinancial('other_charges', 'Other move-in charges')}
+        {editableFinancial('first_month_rent_due_upfront', "First month's rent upfront")}
+        {editableFinancial('last_month_rent_due_upfront', "Last month's rent upfront")}
+      </dl><p className="mt-2 text-xs text-muted">Prepaid rent pays for a lease month; it is not an extra fee. We don't add a preliminary upfront total here while charges may be incomplete.</p></section>
+    </div>
+    <section className="rounded-xl border border-amber-200 bg-amber-50 p-4" aria-label="Questions worth asking"><h3 className="font-display text-xl">Questions worth asking</h3><p className="mt-1 text-sm text-muted">Not found does not mean it does not apply.</p><ul className="mt-2 list-disc space-y-1 pl-5 text-sm text-ink">{questions.map(question => <li key={question}>{question}</li>)}</ul>
+      <details className="mt-3"><summary className="cursor-pointer rounded py-2 text-sm font-semibold text-forest">I've checked whether other fees apply</summary><p className="mt-1 text-xs text-muted">Only confirm a category after checking the complete lease and required fees. This does not remove the amounts above.</p>{schedules.map(([field, label]) => <label key={field} className="flex min-h-11 items-center gap-3 py-2 text-sm"><input type="checkbox" className="h-4 w-4 accent-forest" checked={scheduleChecked(field)} onChange={event => setEdit(field, { action: event.target.checked ? 'confirm_none' : 'mark_unknown' })}/><span>I've checked all {label}.</span></label>)}</details>
+    </section>
+    <details className="surface p-4 sm:p-5"><summary className="cursor-pointer rounded py-2 font-display text-xl">Other payments and discounts</summary><p className="mt-1 text-sm text-muted">Optional details stay unconfirmed unless you choose to include or correct them.</p><dl>{editableFinancial('holding_deposit', 'Holding deposit')}{editableFinancial('concessions', 'Discounts or rent credits')}{findTerm(draft, 'other_charges')?.status !== 'explicit' && !summary.edits.other_charges && editableFinancial('other_charges', 'Other move-in charges')}</dl></details>
+    <details className="surface p-4 sm:p-5" aria-label="Lease conditions"><summary className="cursor-pointer rounded py-2 font-display text-xl">Lease conditions and other unknowns</summary><p className="mt-1 text-sm text-muted">These terms are not approved by the cost summary. Read their source and decide whether to include them.</p>
+      <div className="divide-y divide-line">{legalFields.map(field => {
+        const term = findTerm(draft, field)
+        const edit = summary.edits[field]
+        const shown = edit?.action === 'mark_unknown' ? 'Not confirmed' : edit?.action === 'confirm_none' ? 'You confirmed this does not apply' : edit?.action === 'correct' ? formatCandidateValue(edit.value) : term?.status === 'explicit' ? `${termValue(term)}${edit?.action === 'accept' ? ' — reviewed by you' : ' — not confirmed'}` : earlyMessages[field]
+        return <section key={field} className="py-3"><h4 className="text-sm font-bold">{labels[field]}</h4><p className="mt-1 break-words text-sm text-muted">{shown}</p>{term && ['ambiguous', 'contradictory'].includes(term.status) && <p className="text-xs text-amber-900">Unclear or conflicting wording — check the source.</p>}{safeEvidence(term)}
+          <div className="mt-2 flex flex-wrap gap-2">{term?.status === 'explicit' && <button type="button" className="min-h-11 rounded-lg border border-line px-3 text-xs font-bold text-forest" onClick={() => setEdit(field, { action: 'accept' })}>I've read and checked this clause</button>}<button type="button" aria-label={`Edit ${labels[field]?.toLowerCase()}`} className="min-h-11 rounded px-3 text-xs font-bold text-forest underline" onClick={() => beginEdit(field)}>Edit</button><button type="button" className="min-h-11 rounded px-3 text-xs underline" onClick={() => { setEdit(field, { action: 'mark_unknown' }); setOpenEditor(null) }}>Leave unconfirmed</button></div>
+          {openEditor === field && simpleEditor(term || { field_id: field, value: null, status: 'not_found', source_excerpt: null, page_reference: null, uncertainty_note: null, evidence_verification: 'missing', review_state: 'needs_review' }, field)}
+        </section>
+      })}</div>
+      {draft.general_warnings.length > 0 && <div className="mt-3 rounded-lg bg-amber-50 p-3 text-sm"><strong>Additional notes from extraction</strong><ul className="mt-2 list-disc pl-5">{draft.general_warnings.map((warning, index) => <li key={index}>{warning}</li>)}</ul></div>}
+    </details>
+    <section className="rounded-xl border-2 border-forest bg-[#f4faf6] p-4"><label className="flex cursor-pointer items-start gap-3 text-sm font-semibold text-ink"><input className="mt-1 h-5 w-5 accent-forest" type="checkbox" checked={summary.checked} onChange={event => updateSummary({ checked: event.target.checked })}/><span>I've checked the rent, lease length, and costs shown.</span></label><p className="mt-2 text-xs text-muted">Unconfirmed details stay unknown. Other payments and clauses need their own review.</p><p role="status" className="mt-2 text-sm text-forest">{readiness || 'Ready to calculate known costs.'}</p></section>
     {(localError || error) && <p role="alert" className="text-sm text-red-800">{localError || error}</p>}
     <div className="flex flex-wrap gap-3"><button type="button" className="min-h-11 rounded-xl border border-line px-5 py-2 text-sm font-bold" onClick={onBack}>Back to my lease</button><button type="submit" disabled={busy || Boolean(readiness)} className="min-h-11 rounded-xl bg-forest px-5 py-2 text-sm font-bold text-white disabled:opacity-50">{busy ? 'Confirming lease…' : 'See my rental costs'}</button></div>
   </form>

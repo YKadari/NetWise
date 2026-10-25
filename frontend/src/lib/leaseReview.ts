@@ -12,9 +12,8 @@ export interface ReviewSummary {
 
 export const requiredLeaseFields: LeaseFieldId[] = ['rental_label', 'monthly_base_rent', 'lease_term_months']
 export const financialSummaryFields = new Set<LeaseFieldId>([
-  'security_deposit', 'holding_deposit', 'holding_deposit_status', 'first_month_rent_due_upfront',
-  'last_month_rent_due_upfront', 'nonrefundable_fees', 'nonrefundable_fees_status', 'other_charges',
-  'other_charges_status', 'recurring_charges', 'recurring_charges_status', 'utilities', 'concessions',
+  'security_deposit', 'first_month_rent_due_upfront', 'last_month_rent_due_upfront',
+  'nonrefundable_fees', 'other_charges', 'recurring_charges', 'utilities',
 ])
 export const clauseFields = new Set<LeaseFieldId>([
   'early_termination', 'lease_break_fee', 'notice_requirements', 'renewal_or_rent_change',
@@ -56,7 +55,11 @@ export function likelyUtilityDuplicate(draft: LeaseDraft): string[] {
   return matches
 }
 
-function acceptedShape(field: LeaseFieldId, value: unknown): boolean {
+export function acceptedShape(field: LeaseFieldId, value: unknown): boolean {
+  // An optional charge must not silently become a mandatory modeled cost.
+  if (Array.isArray(value) && value.some(entry => entry && typeof entry === 'object' &&
+    ((entry as Record<string, unknown>).optional === true || (entry as Record<string, unknown>).required === false))) return false
+  if (field === 'other_charges' && Array.isArray(value) && value.some(entry => !entry || typeof entry !== 'object' || typeof (entry as Record<string, unknown>).refundable !== 'boolean')) return false
   if (field === 'security_deposit') return typeof value === 'number' && Number.isFinite(value) && value >= 0
   if (field === 'recurring_charges') return Array.isArray(value) && value.every(entry => {
     if (!entry || typeof entry !== 'object' || Array.isArray(entry)) return false
@@ -164,11 +167,11 @@ export function validateReviewSummary(draft: LeaseDraft, state: ReviewSummary): 
 
 export function chargeLines(value: unknown): { name: string; amount: number | null; detail: string | null }[] {
   if (!Array.isArray(value)) return []
-  return value.map((entry, index) => {
-    if (!entry || typeof entry !== 'object' || Array.isArray(entry)) return { name: `Charge ${index + 1}`, amount: null, detail: 'Details need review' }
+  return value.map(entry => {
+    if (!entry || typeof entry !== 'object' || Array.isArray(entry)) return { name: 'Unnamed fee — ask what it covers', amount: null, detail: 'Details need review' }
     const item = entry as Record<string, unknown>
     const rawName = [item.name, item.fee_description, item.description, item.charge_name, item.item].find(entry => typeof entry === 'string' && entry.trim())
-    const name = typeof rawName === 'string' ? rawName.trim() : `Charge ${index + 1}`
+    const name = typeof rawName === 'string' ? rawName.trim() : 'Unnamed fee — ask what it covers'
     const rawAmount = [item.monthly_amount, item.amount, item.fee_amount, item.estimated_monthly_amount, item.monthly_fee].find(entry => typeof entry === 'number' && Number.isFinite(entry))
     const amount = typeof rawAmount === 'number' ? rawAmount : null
     const frequency = [item.frequency, item.billing_frequency, item.payment_frequency].find(entry => typeof entry === 'string')
@@ -191,7 +194,7 @@ export function formatCandidateValue(value: unknown): string {
       if (!item || typeof item !== 'object') return String(item)
       const record = item as Record<string, unknown>
       const rawName = [record.name, record.fee_description, record.description, record.charge_name, record.item].find(entry => typeof entry === 'string')
-      const name = typeof rawName === 'string' ? rawName : 'Charge'
+      const name = typeof rawName === 'string' ? rawName : 'Unnamed fee — ask what it covers'
       const rawAmount = [record.monthly_amount, record.amount, record.fee_amount, record.estimated_monthly_amount, record.monthly_fee].find(entry => typeof entry === 'number' && Number.isFinite(entry))
       const amount = typeof rawAmount === 'number' ? rawAmount : null
       const frequency = record.frequency ?? record.billing_frequency ?? record.payment_frequency

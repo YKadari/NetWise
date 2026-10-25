@@ -16,15 +16,7 @@ import { RentalWorkspace } from './components/RentalWorkspace'
 interface Data { areas: Area[]; housing: FeatureCollection<HousingProperties>; stations: FeatureCollection<StationProperties> }
 
 export default function App() {
-  const [view, setView] = useState<ProductView>(() => {
-    try {
-      if (sessionStorage.getItem('nestwise_auth_return_view') === 'analyze') {
-        sessionStorage.removeItem('nestwise_auth_return_view')
-        return 'analyze'
-      }
-    } catch { /* Storage can be unavailable in restrictive browser modes. */ }
-    return 'explore'
-  })
+  const [view, setView] = useState<ProductView>('explore')
   const [form, setForm] = useState<FormValues>(defaultForm)
   const [applied, setApplied] = useState<Preferences>(toPreferences(defaultForm))
   const [data, setData] = useState<Data | null>(null)

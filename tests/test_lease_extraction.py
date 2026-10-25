@@ -12,23 +12,6 @@ from backend.app.lease_extraction.workflow import confirm_draft, make_draft, ver
 from backend.app.main import app
 
 
-@pytest.fixture(autouse=True)
-def mock_auth_and_quota_for_legacy_extraction_tests(monkeypatch):
-    """Keep provider/workflow tests deterministic; auth and Firestore are tested separately."""
-    import backend.app.api.lease_routes as routes
-    monkeypatch.setenv("NESTWISE_ENV", "test")
-    monkeypatch.setenv("NESTWISE_ENABLE_PUBLIC_GEMINI", "true")
-    monkeypatch.setenv("GEMINI_API_KEY", "synthetic-server-key")
-    monkeypatch.setenv("FIREBASE_PROJECT_ID", "nestwise-test-project")
-    monkeypatch.setenv("FIREBASE_SERVICE_ACCOUNT_JSON", json.dumps({"project_id": "nestwise-test-project", "private_key": "synthetic"}))
-    monkeypatch.setenv("NESTWISE_GEMINI_USER_DAILY_LIMIT", "3")
-    monkeypatch.setenv("NESTWISE_GEMINI_GLOBAL_DAILY_LIMIT", "60")
-    monkeypatch.setenv("NESTWISE_GEMINI_MAX_CONCURRENT", "2")
-    monkeypatch.setattr(routes, "_authenticated_uid", lambda _request: "synthetic-user")
-    monkeypatch.setattr(routes, "_reserve_user_quota", lambda _uid: object())
-    monkeypatch.setattr(routes, "_release_quota", lambda _reservation: None)
-
-
 def candidate(field_id, value, excerpt="The monthly rent is $1,500.", status="explicit"):
     return CandidateTerm(field_id=field_id, value=value, source_excerpt=excerpt if status == "explicit" else None, status=status)
 
@@ -235,10 +218,11 @@ def test_provider_submission_rate_guard_is_bounded():
     assert error.value.status_code == 429
 
 
-def test_provider_uses_compatible_raw_schema_and_validates_with_pydantic(monkeypatch):
+def test_provider_uses_compatible_raw_schema_and_validates_with_pydantic(monkeypatch, caplog):
     import backend.app.lease_extraction.provider as provider
     from google import genai
 
+    monkeypatch.setenv("NESTWISE_GEMINI_DIAGNOSTICS", "1")
     monkeypatch.setattr(provider, "get_api_key", lambda: "synthetic-test-key")
     monkeypatch.setattr(provider, "get_model", lambda: "synthetic-test-model")
     result = {"terms": [{"field_id": "rental_label", "value": "Synthetic lease", "source_excerpt": "Synthetic lease", "status": "explicit"}], "general_warnings": []}
@@ -254,7 +238,8 @@ def test_provider_uses_compatible_raw_schema_and_validates_with_pydantic(monkeyp
             self.models = FakeModels()
 
     monkeypatch.setattr(genai, "Client", FakeClient)
-    extraction = provider.extract_with_gemini("Synthetic lease")
+    with caplog.at_level("INFO", logger="backend.app.lease_extraction.provider"):
+        extraction = provider.extract_with_gemini("Synthetic lease")
     config = captured["config"]
     assert extraction.terms[0].field_id == "rental_label"
     assert config.response_schema is None
@@ -264,6 +249,13 @@ def test_provider_uses_compatible_raw_schema_and_validates_with_pydantic(monkeyp
     assert "array" in candidate_schema["properties"]["value"]["type"]
     assert candidate_schema["additionalProperties"] is False
     assert "maxItems" not in config.response_json_schema["properties"]["terms"]
+    assert "stage=complete category=success" in caplog.text
+    assert "client_initialization:" in caplog.text
+    assert "request_construction:" in caplog.text
+    assert "gemini_api_call:" in caplog.text
+    assert "response_parsing:" in caplog.text
+    assert "pydantic_validation:" in caplog.text
+    assert "Synthetic lease" not in caplog.text
 
 
 def test_local_gemini_diagnostics_include_stage_without_exception_text(monkeypatch, caplog):
@@ -287,7 +279,10 @@ def test_local_gemini_diagnostics_include_stage_without_exception_text(monkeypat
         with pytest.raises(provider.GeminiProviderError):
             provider.extract_with_gemini("private synthetic lease")
     assert "stage=gemini_api_call" in caplog.text
-    assert "category=sdk_request_construction" in caplog.text
+    assert "category=local_or_provider_failure" in caplog.text
+    assert "stage_timings_ms=configuration:" in caplog.text
+    assert "gemini_api_call:" in caplog.text
+    assert "total_ms=" in caplog.text
     assert "private synthetic lease" not in caplog.text
     assert "do-not-log" not in caplog.text
 

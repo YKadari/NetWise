@@ -10,27 +10,27 @@ import { FinancialProfileForm } from './FinancialProfileForm'
 import { RentalResults } from './RentalResults'
 import { RentalStressPanel } from './RentalStressPanel'
 import { RentalComparison } from './RentalComparison'
-import { ApiError } from '../lib/api'
-import { getFreshFirebaseIdToken, publicFirebaseConfigMatchesBackend } from '../lib/firebaseAuth'
-import { useFirebaseGoogleAuth } from '../hooks/useFirebaseGoogleAuth'
+import { GuidedAdvisor } from './GuidedAdvisor'
+import { GuidedQuestions } from './GuidedQuestions'
+import { blankGuided, sampleGuided, type GuidedDraft } from '../lib/guidedAdvisor'
 
 interface Props { view: ProductView; onNavigate: (view: ProductView) => void }
-type Entry = 'manual' | 'lease' | null
+type Entry = 'manual' | 'lease' | 'guided' | null
 type Step = 'start' | 'entry' | 'review' | 'results'
 type Operation = 'extract' | 'confirm' | 'evaluate' | 'stress' | 'demo' | null
 const cameFromDocument = (candidate: RentalOffer | null) => Boolean(candidate && 'base_rent_provenance' in candidate)
 
 export function RentalWorkspace({ view, onNavigate }: Props) {
-  const googleAuth = useFirebaseGoogleAuth()
   const [entry, setEntry] = useState<Entry>(null)
   const [leaseMethod, setLeaseMethod] = useState<'text' | 'pdf'>('text')
   const [step, setStep] = useState<Step>('start')
   const [status, setStatus] = useState<LeaseServiceStatus | null>(null)
   const [statusError, setStatusError] = useState<string | null>(null)
-  const [leaseAuthMessage, setLeaseAuthMessage] = useState<string | null>(null)
   const [draft, setDraft] = useState<LeaseDraft | null>(null)
   const [seed, setSeed] = useState<RentalOffer | null>(null)
   const [seedVersion, setSeedVersion] = useState(0)
+  const [guidedSeed, setGuidedSeed] = useState<GuidedDraft>(blankGuided)
+  const [guidedResult, setGuidedResult] = useState<GuidedDraft | null>(null)
   const [offer, setOffer] = useState<RentalOffer | null>(null)
   const [evaluation, setEvaluation] = useState<RentalEvaluation | null>(null)
   const [evaluationProfileKey, setEvaluationProfileKey] = useState('')
@@ -51,8 +51,6 @@ export function RentalWorkspace({ view, onNavigate }: Props) {
     leaseServiceStatus().then(setStatus).catch(cause => setStatusError(cause instanceof Error ? cause.message : 'Could not check Gemini availability.'))
   }, [])
 
-  useEffect(() => { if (googleAuth.user) setLeaseAuthMessage(null) }, [googleAuth.user])
-
   let profile: FinancialProfile | undefined
   let profileError: string | null = null
   if (profileEnabled) {
@@ -64,7 +62,7 @@ export function RentalWorkspace({ view, onNavigate }: Props) {
 
   const evaluate = async (nextOffer: RentalOffer, nextProfile = profile, nextKey = currentProfileKey) => {
     if (operation) return
-    if (profileEnabled && profileError && nextProfile === undefined) { setError(profileError); return }
+    if (profileEnabled && profileError && nextProfile === undefined && nextKey === currentProfileKey) { setError(profileError); return }
     setOperation('evaluate'); setError(null); setStressResult(null)
     try {
       const result = await evaluateRental(nextOffer, nextProfile)
@@ -75,31 +73,15 @@ export function RentalWorkspace({ view, onNavigate }: Props) {
   const extractText = async (text: string) => {
     if (operation) return
     setOperation('extract'); setError(null)
-    try {
-      const idToken = status?.authentication_required ? (googleAuth.user ? await getFreshFirebaseIdToken(googleAuth.user) : null) : undefined
-      if (idToken === null) { setLeaseAuthMessage('Sign in with Google before extracting. Your lease text is still here.'); return }
-      setDraft(await extractLeaseText(text, idToken)); setStep('review'); setEntryNotice(null); setLeaseAuthMessage(null)
-    } catch (cause) {
-      if (cause instanceof ApiError && cause.status === 401 && status?.authentication_required) {
-        setLeaseAuthMessage('Your Google sign-in expired. Sign in again to continue; your lease text is still here.')
-        void googleAuth.signOut()
-      } else setError(cause instanceof Error ? cause.message : 'Extraction failed.')
-    }
+    try { setDraft(await extractLeaseText(text)); setStep('review'); setEntryNotice(null) }
+    catch (cause) { setError(cause instanceof Error ? cause.message : 'Extraction failed.') }
     finally { setOperation(null) }
   }
   const extractPdf = async (file: File) => {
     if (operation) return
     setOperation('extract'); setError(null)
-    try {
-      const idToken = status?.authentication_required ? (googleAuth.user ? await getFreshFirebaseIdToken(googleAuth.user) : null) : undefined
-      if (idToken === null) { setLeaseAuthMessage('Sign in with Google before extracting. Your selected PDF is still here.'); return }
-      setDraft(await extractLeasePdf(file, idToken)); setStep('review'); setEntryNotice(null); setLeaseAuthMessage(null)
-    } catch (cause) {
-      if (cause instanceof ApiError && cause.status === 401 && status?.authentication_required) {
-        setLeaseAuthMessage('Your Google sign-in expired. Sign in again to continue; your selected PDF is still here.')
-        void googleAuth.signOut()
-      } else setError(cause instanceof Error ? cause.message : 'PDF extraction failed.')
-    }
+    try { setDraft(await extractLeasePdf(file)); setStep('review'); setEntryNotice(null) }
+    catch (cause) { setError(cause instanceof Error ? cause.message : 'PDF extraction failed.') }
     finally { setOperation(null) }
   }
   const confirm = async (decisions: ReviewDecision[]) => {
@@ -125,13 +107,10 @@ export function RentalWorkspace({ view, onNavigate }: Props) {
   const demo = async (stayInCompare = false) => {
     if (operation) return
     setDemoCompare(stayInCompare)
-    setOffer(demoOffers[0]); setSeed(demoOffers[0]); setSeedVersion(n => n + 1)
-    setProfileDraft(blankProfile()); setProfileEnabled(false); setProfileEditing(false); setEntry('manual'); setDraft(null); setError(null); setEntryNotice(null); setStressResult(null); setSavedSlot(null)
+    setOffer(null); setEvaluation(null); setSeed(null); setSeedVersion(n => n + 1)
+    setProfileDraft(blankProfile()); setProfileEnabled(false); setProfileEditing(false); setEntry('guided'); setGuidedSeed(sampleGuided()); setGuidedResult(null); setDraft(null); setError(null); setEntryNotice(null); setStressResult(null); setSavedSlot(null)
     if (stayInCompare) { setDemoCompare(true); onNavigate('compare'); return }
-    onNavigate('analyze'); setOperation('demo')
-    try { setEvaluation(await evaluateRental(demoOffers[0])); setEvaluationProfileKey(JSON.stringify(null)); setStep('results') }
-    catch (cause) { setStep('entry'); setError(cause instanceof Error ? cause.message : 'Demo evaluation unavailable.') }
-    finally { setOperation(null) }
+    onNavigate('analyze'); setStep('entry')
   }
   const edit = (slot: 'A' | 'B') => {
     setDemoCompare(false)
@@ -147,30 +126,39 @@ export function RentalWorkspace({ view, onNavigate }: Props) {
     setSavedSlot(slot)
   }
   const startManual = () => {
-    setSeed(null); setSeedVersion(n => n + 1); setEntry('manual'); setStep('entry'); setDraft(null); setError(null); setEntryNotice(null)
+    setSeed(null); setGuidedResult(null); setSeedVersion(n => n + 1); setEntry('manual'); setStep('entry'); setDraft(null); setError(null); setEntryNotice(null)
     setOffer(null); setEvaluation(null); setSavedSlot(null); setStressResult(null); setDemoCompare(false)
   }
+  const startGuided = () => {
+    setGuidedSeed(blankGuided()); setGuidedResult(null); setSeedVersion(n => n + 1); setEntry('guided'); setStep('entry'); setDraft(null); setError(null); setEntryNotice(null)
+    setOffer(null); setEvaluation(null); setSavedSlot(null); setStressResult(null); setDemoCompare(false)
+    setProfileDraft(blankProfile()); setProfileEnabled(false); setProfileEditing(false)
+  }
+  const evaluateGuided = (nextOffer: RentalOffer, nextProfile?: FinancialProfile, answers?: GuidedDraft) => {
+    const nextDraft = answers ?? blankGuided()
+    const nextProfileDraft: ProfileDraft = { ...blankProfile(), income: nextDraft.income, savings: nextDraft.savings, essentials: nextDraft.essentials, reserve: nextDraft.reserve }
+    setProfileDraft(nextProfileDraft); setProfileEnabled(Boolean(nextProfile)); setGuidedResult(nextDraft)
+    void evaluate(nextOffer, nextProfile, JSON.stringify(nextProfile ? nextProfileDraft : null))
+  }
   const startLease = () => {
-    setSeed(null); setSeedVersion(n => n + 1); setEntry('lease'); setLeaseMethod('text'); setStep('entry'); setDraft(null); setError(null); setEntryNotice(null)
+    setSeed(null); setGuidedResult(null); setSeedVersion(n => n + 1); setEntry('lease'); setLeaseMethod('text'); setStep('entry'); setDraft(null); setError(null); setEntryNotice(null)
     setOffer(null); setEvaluation(null); setSavedSlot(null); setStressResult(null); setDemoCompare(false)
   }
   const editCurrent = () => {
+    if (entry === 'guided' && guidedResult) { setGuidedSeed(guidedResult); setSeedVersion(n => n + 1); setStep('entry'); setError(null); return }
     setStep('entry'); setEntry('manual'); setSeed(cameFromDocument(offer) ? null : offer); setSeedVersion(n => n + 1); setError(null)
     setEntryNotice(cameFromDocument(offer) ? 'This offer came from reviewed document terms. The manual form starts a new offer so it does not silently drop clauses or their provenance. Your confirmed offer remains available until you evaluate a replacement.' : null)
   }
-  const progressLabels = entry === 'lease' ? ['Upload lease', 'Review findings', 'See costs', 'Explore scenarios'] : ['Enter details', 'See costs', 'Explore scenarios']
+  const progressLabels = entry === 'lease' ? ['Paste lease', 'Review findings', 'See costs', 'Explore scenarios'] : entry === 'guided' ? ['Guided questions', 'See costs', 'Explore scenarios'] : ['Enter details', 'See costs', 'Explore scenarios']
   const progressIndex = step === 'entry' ? 0 : step === 'review' ? 1 : step === 'results' ? (entry === 'lease' ? (stressResult ? 3 : 2) : (stressResult ? 2 : 1)) : -1
 
   return <main hidden={view === 'explore'} className="mx-auto max-w-[1380px] px-4 pb-12 pt-7 md:px-7">
     <div hidden={view !== 'analyze'} className="space-y-6">
-      {step === 'start' && <section className="mx-auto max-w-5xl py-5 md:py-12"><div className="kicker">Analyze your next rental</div><h1 className="mt-3 max-w-3xl font-display text-4xl leading-tight md:text-5xl">Understand the real cost of your next rental.</h1><p className="mt-4 max-w-3xl text-base leading-relaxed text-muted">Find out what you'll pay upfront, what your lease could cost over time, and what happens if your circumstances change.</p>{operation === 'demo' && <p role="status" className="mt-4 rounded-xl border border-[#b5d5c4] bg-mint p-4 text-sm font-semibold text-forest">Calculating the sample rental costs…</p>}<div className="mt-8 grid gap-4 md:grid-cols-3"><button type="button" disabled={operation !== null} onClick={startLease} className="group min-h-56 rounded-2xl border-2 border-forest bg-forest p-6 text-left text-white shadow-lg transition hover:-translate-y-0.5 focus-visible:outline focus-visible:outline-4 focus-visible:outline-mint disabled:opacity-60"><span className="text-xs font-bold uppercase tracking-widest text-mint">Analyze a lease with AI</span><span className="mt-4 block font-display text-2xl">Review the details before you decide.</span><span className="mt-3 block text-sm text-white/80">Upload a PDF or paste lease text. Gemini finds costs and terms for you to review.</span><span className="mt-5 block text-sm font-bold">Upload PDF or paste text →</span></button><button type="button" disabled={operation !== null} onClick={startManual} className="min-h-56 rounded-2xl border border-line bg-white p-6 text-left transition hover:border-forest hover:shadow-md focus-visible:outline focus-visible:outline-4 focus-visible:outline-mint disabled:opacity-60"><span className="text-xs font-bold uppercase tracking-widest text-forest">No lease yet?</span><span className="mt-4 block font-display text-2xl text-ink">Enter rental details</span><span className="mt-3 block text-sm leading-relaxed text-muted">Know the advertised rent and a few fees? Start with what you know.</span><span className="mt-5 block text-sm font-bold text-forest">Enter details →</span></button><button type="button" disabled={operation !== null} onClick={() => void demo()} className="min-h-56 rounded-2xl border border-line bg-white p-6 text-left transition hover:border-forest hover:shadow-md focus-visible:outline focus-visible:outline-4 focus-visible:outline-mint disabled:opacity-60"><span className="text-xs font-bold uppercase tracking-widest text-forest">Try it now</span><span className="mt-4 block font-display text-2xl text-ink">Try a sample rental</span><span className="mt-3 block text-sm leading-relaxed text-muted">Explore a realistic example without entering anything.</span><span className="mt-5 block text-sm font-bold text-forest">See a sample result →</span></button></div>{statusError && <p className="mt-5 text-sm text-muted">Gemini status could not be checked. Manual entry and the sample rental are available.</p>}</section>}
+      {step === 'start' && <section className="mx-auto max-w-5xl py-5 md:py-12"><div className="kicker">Analyze your next rental</div><h1 className="mt-3 max-w-3xl font-display text-4xl leading-tight md:text-5xl">Understand what this rental will really cost.</h1><p className="mt-4 max-w-3xl text-base leading-relaxed text-muted">Answer a few simple questions about your rental. We'll help you uncover upfront costs, ongoing expenses, and potential financial risks.</p><div className="mt-8 grid gap-4 md:grid-cols-3"><button type="button" onClick={startGuided} className="min-h-56 rounded-2xl border-2 border-forest bg-forest p-6 text-left text-white shadow-lg focus-visible:outline focus-visible:outline-4 focus-visible:outline-mint"><span className="text-xs font-bold uppercase tracking-widest text-mint">Guided rental analysis</span><span className="mt-4 block font-display text-2xl">Answer a few clear questions.</span><span className="mt-3 block text-sm text-white/80">A lease document and personal finances are optional.</span><span className="mt-5 block text-sm font-bold">Start guided analysis →</span></button><button type="button" onClick={startLease} className="min-h-56 rounded-2xl border border-line bg-white p-6 text-left focus-visible:outline focus-visible:outline-4 focus-visible:outline-mint"><span className="text-xs font-bold uppercase tracking-widest text-forest">Optional AI help</span><span className="mt-4 block font-display text-2xl text-ink">Analyze lease text with AI</span><span className="mt-3 block text-sm text-muted">Paste a relevant clause, then review every suggested term yourself.</span><span className="mt-5 block text-sm font-bold text-forest">Paste lease text →</span></button><button type="button" onClick={() => void demo()} className="min-h-56 rounded-2xl border border-line bg-white p-6 text-left focus-visible:outline focus-visible:outline-4 focus-visible:outline-mint"><span className="text-xs font-bold uppercase tracking-widest text-forest">Synthetic example</span><span className="mt-4 block font-display text-2xl text-ink">Try a sample rental</span><span className="mt-3 block text-sm text-muted">Walk through the advisor with invented numbers and two unknown costs.</span><span className="mt-5 block text-sm font-bold text-forest">Explore sample questions →</span></button></div>{status?.service_ready === false && <p className="mt-5 text-sm text-muted">Live AI analysis is unavailable here. Guided rental analysis works without it.</p>}{statusError && <p className="mt-5 text-sm text-muted">AI availability could not be checked. Guided analysis is still available.</p>}</section>}
       {step !== 'start' && <><div className="flex flex-wrap items-center justify-between gap-3"><div><div className="kicker">Analyze · {step === 'review' ? 'Review findings' : step === 'results' ? 'Your result' : 'Rental details'}</div><p className="mt-1 text-sm text-muted">{step === 'review' ? 'Review every extracted term before calculating.' : step === 'results' ? 'Your calculation is ready. Edit terms or explore what-if scenarios.' : entry === 'lease' ? 'Upload a lease or paste its text for review.' : 'Start with the details you know; unknown costs stay marked unknown.'}</p></div><button type="button" className="min-h-10 rounded-xl border border-line px-4 text-sm font-bold" onClick={() => { if (step === 'review') { setStep('entry'); setError(null) } else setStep('start') }}>{step === 'review' ? '← Back to document' : '← All starting options'}</button></div><ol aria-label="Analyze progress" className="grid gap-2 sm:flex">{progressLabels.map((label,index) => <li key={label} aria-current={progressIndex === index ? 'step' : undefined} className={`flex-1 rounded-xl border px-3 py-2 text-xs font-bold ${progressIndex === index ? 'border-forest bg-forest text-white' : index < progressIndex ? 'border-[#b5d5c4] bg-mint text-forest' : 'border-line bg-white text-muted'}`}><span className="mr-2" aria-hidden="true">{index < progressIndex ? '✓' : index + 1}</span>{label}</li>)}</ol></>}
-      {entry !== null && (step === 'start' || step === 'entry' || step === 'review') && <section hidden={step !== 'entry'} className="surface p-5 md:p-7"><h2 className="font-display text-2xl">{entry === 'lease' ? 'Analyze a lease with AI' : 'Enter rental details'}</h2>{entry === 'lease' && <p className="mt-2 text-sm text-muted">Gemini looks for rent, fees, deposits, lease length, concessions, and conditions. AI can make mistakes; you review every finding before calculations. Your submitted lease text is sent to Google Gemini.</p>}<div className="mt-4 flex flex-wrap gap-x-4 gap-y-2 text-sm">{entry === 'lease' ? <button type="button" className="font-semibold text-forest underline" onClick={startManual}>Switch to manual entry</button> : <button type="button" className="font-semibold text-forest underline" onClick={startLease}>Analyze a lease instead</button>}</div>
-        {entryNotice && <p className="mt-4 rounded-xl border border-amber-200 bg-amber-50 p-3 text-sm text-amber-950">{entryNotice}</p>}
-        <div className="mt-6">{entry === 'manual' && <RentalInput key={seedVersion} seed={seed} busy={operation !== null} onEvaluate={next => void evaluate(next)}/ >}{entry === 'lease' && <LeaseInput key={leaseMethod} initialMethod={leaseMethod} status={status} busy={operation === 'extract'} error={error} authConfigured={googleAuth.configured && publicFirebaseConfigMatchesBackend(status?.firebase_project_id ?? undefined)} authLoading={googleAuth.loading} authBusy={googleAuth.busy} authUser={Boolean(googleAuth.user)} authError={leaseAuthMessage || googleAuth.error} onSignIn={() => { setLeaseAuthMessage(null); void googleAuth.signIn() }} onSignOut={() => void googleAuth.signOut()} onText={text => void extractText(text)} onPdf={file => void extractPdf(file)}/>}</div>{entry === 'manual' && error && <p role="alert" className="mt-3 text-sm text-red-800">{error}</p>}
-      </section>}
+      {entry !== null && (step === 'start' || step === 'entry' || step === 'review') && <section hidden={step !== 'entry'} className="surface p-5 md:p-7">{entry !== 'guided' && <><h2 className="font-display text-2xl">{entry === 'lease' ? 'Analyze lease text with AI' : 'Enter rental details'}</h2>{entry === 'lease' && <p className="mt-2 text-sm text-muted">Gemini suggests costs and terms from pasted text. Review every finding before calculation. Text is sent to Google Gemini.</p>}<div className="mt-4 text-sm">{entry === 'lease' ? <button type="button" className="font-semibold text-forest underline" onClick={startGuided}>Switch to guided analysis</button> : <button type="button" className="font-semibold text-forest underline" onClick={startLease}>Analyze lease text instead</button>}</div></>}{entry === 'guided' && <button type="button" className="text-sm font-semibold text-forest underline" onClick={startManual}>Use the detailed manual form instead</button>}{entryNotice && <p className="mt-4 rounded-xl border border-amber-200 bg-amber-50 p-3 text-sm text-amber-950">{entryNotice}</p>}<div className="mt-6">{entry === 'guided' && <GuidedAdvisor key={seedVersion} initial={guidedSeed} busy={operation !== null} status={status} onEvaluate={evaluateGuided}/ >}{entry === 'manual' && <RentalInput key={seedVersion} seed={seed} busy={operation !== null} onEvaluate={next => void evaluate(next)}/ >}{entry === 'lease' && <LeaseInput key={leaseMethod} textOnly status={status} busy={operation === 'extract'} error={error} onText={text => void extractText(text)} onPdf={file => void extractPdf(file)} onManual={startGuided}/>}</div>{entry === 'manual' && error && <p role="alert" className="mt-3 text-sm text-red-800">{error}</p>}{entry === 'guided' && error && <p role="alert" className="mt-3 text-sm text-red-800">{error}</p>}</section>}
       {step === 'review' && draft && <section className="surface p-5 md:p-7"><p className="mb-4 text-xs text-muted">Source: {draft.source_type === 'pdf' ? 'PDF' : 'pasted text'}. No terms are confirmed until you review and continue.</p><LeaseReview key={draft.draft_id} draft={draft} busy={operation === 'confirm'} error={error} onConfirm={decisions => void confirm(decisions)} onBack={() => { setStep('entry'); setError(null) }}/></section>}
-      {step === 'results' && <div className="space-y-5">{profileChanged && <div className="rounded-xl border border-amber-200 bg-amber-50 p-4 text-sm text-amber-950">Your financial profile changed. The figures below may be out of date. <button type="button" className="ml-2 font-bold underline" onClick={() => { if (offer) void evaluate(offer) }}>Refresh financial results</button></div>}{error && <p role="alert" className="text-sm text-red-800">{error} {offer && <button type="button" className="font-bold underline" onClick={() => void evaluate(offer)}>Retry evaluation</button>}</p>}{offer && evaluation && <><RentalResults offer={offer} result={evaluation} onSave={save} savedSlot={savedSlot} onEdit={editCurrent} onNew={() => { setStep('start'); setEntry(null); setSeed(null); setSeedVersion(n => n + 1); setProfileEnabled(false); setProfileEditing(false); setProfileDraft(blankProfile()); setError(null) }} onCompare={() => { setDemoCompare(false); onNavigate('compare') }} onCompareDemo={() => { setDemoCompare(true); onNavigate('compare') }} isDemo={offer.rental_label === demoOffers[0].rental_label} profileStale={profileChanged} hasSavedA={rentalA !== null} hasSavedB={rentalB !== null} reviewedDocument={cameFromDocument(offer)}/> <section className="surface p-5" aria-label="Personal budget analysis"><div className="kicker">Optional · personal budget</div><h2 className="mt-1 font-display text-2xl">Can I comfortably afford this rental?</h2><p className="mt-2 text-sm text-muted">Add your take-home pay, expenses, and savings to see how this rental fits your budget.</p>{!profileEnabled && <button type="button" className="mt-4 min-h-11 rounded-xl bg-forest px-5 text-sm font-bold text-white" onClick={() => { setProfileEnabled(true); setProfileEditing(true) }}>Add my finances</button>}{profileEnabled && <><p className="mt-3 text-sm text-forest">{profileChanged ? 'Update the profile and refresh to recalculate affordability.' : evaluation.financial_profile ? `${evaluation.monthly_costs.monthly_costs_complete ? 'Monthly' : 'Known-term monthly'} cash left: ${money(evaluation.financial_profile.known_monthly_cash_remaining_after_housing_and_savings)} under this profile.${evaluation.monthly_costs.monthly_costs_complete ? '' : ' Unconfirmed housing costs are excluded.'}` : 'Complete your profile to calculate personalized cash flow.'}</p>{profileEditing && <FinancialProfileForm enabled value={profileDraft} onEnabled={enabled => { setProfileEnabled(enabled); setProfileEditing(enabled) }} onChange={setProfileDraft}/>}<div className="mt-3 flex flex-wrap gap-2">{profileEditing ? <button type="button" disabled={operation !== null || Boolean(profileError)} className="min-h-10 rounded-xl bg-forest px-4 text-sm font-bold text-white disabled:opacity-50" onClick={() => offer && void evaluate(offer)}>Update my finances</button> : <button type="button" className="min-h-10 rounded-xl border border-forest px-4 text-sm font-bold text-forest" onClick={() => setProfileEditing(true)}>Edit finances</button>}{profileError && <span role="alert" className="self-center text-sm text-red-800">{profileError}</span>}</div></>}</section><details className="surface p-5"><summary className="cursor-pointer font-display text-2xl">What if things don't go according to plan?</summary><p className="mt-2 text-sm text-muted">Explore how unexpected costs or changes in your living situation could affect your budget.</p>{!profileEnabled && <p className="mt-2 text-xs text-muted">Stress scenarios can run without a personal profile; add finances above for personalized savings impact.</p>}{!profileChanged && <RentalStressPanel key={offer.rental_label} offer={offer} busy={operation === 'stress'} error={stressError} result={stressResult} onRun={scenario => void runStress(scenario)}/>}</details></>}{offer && !evaluation && <button type="button" className="min-h-11 rounded-xl bg-forest px-5 text-sm font-bold text-white" onClick={() => void evaluate(offer)}>Evaluate confirmed offer</button>}</div>}
+      {step === 'results' && <div className="space-y-5">{profileChanged && <div className="rounded-xl border border-amber-200 bg-amber-50 p-4 text-sm text-amber-950">Your financial profile changed. The figures below may be out of date. <button type="button" className="ml-2 font-bold underline" onClick={() => { if (offer) void evaluate(offer) }}>Refresh financial results</button></div>}{error && <p role="alert" className="text-sm text-red-800">{error} {offer && <button type="button" className="font-bold underline" onClick={() => void evaluate(offer)}>Retry evaluation</button>}</p>}{offer && evaluation && <><RentalResults offer={offer} result={evaluation} onSave={save} savedSlot={savedSlot} onEdit={editCurrent} onNew={() => { setStep('start'); setEntry(null); setSeed(null); setSeedVersion(n => n + 1); setProfileEnabled(false); setProfileEditing(false); setProfileDraft(blankProfile()); setError(null) }} onCompare={() => { setDemoCompare(false); onNavigate('compare') }} onCompareDemo={() => { setDemoCompare(true); onNavigate('compare') }} isDemo={offer.rental_label === demoOffers[0].rental_label} profileStale={profileChanged} hasSavedA={rentalA !== null} hasSavedB={rentalB !== null} reviewedDocument={cameFromDocument(offer)}/>{entry === 'guided' && guidedResult && <GuidedQuestions answers={guidedResult}/>} <section className="surface p-5" aria-label="Personal budget analysis"><div className="kicker">Optional · personal budget</div><h2 className="mt-1 font-display text-2xl">Can I comfortably afford this rental?</h2><p className="mt-2 text-sm text-muted">Add your take-home pay, expenses, and savings to see how this rental fits your budget.</p>{!profileEnabled && <button type="button" className="mt-4 min-h-11 rounded-xl bg-forest px-5 text-sm font-bold text-white" onClick={() => { setProfileEnabled(true); setProfileEditing(true) }}>Add my finances</button>}{profileEnabled && <><p className="mt-3 text-sm text-forest">{profileChanged ? 'Update the profile and refresh to recalculate affordability.' : evaluation.financial_profile ? `${evaluation.monthly_costs.monthly_costs_complete ? 'Monthly' : 'Known-term monthly'} cash left: ${money(evaluation.financial_profile.known_monthly_cash_remaining_after_housing_and_savings)} under this profile.${evaluation.monthly_costs.monthly_costs_complete ? '' : ' Unconfirmed housing costs are excluded.'}` : 'Complete your profile to calculate personalized cash flow.'}</p>{profileEditing && <FinancialProfileForm enabled value={profileDraft} onEnabled={enabled => { setProfileEnabled(enabled); setProfileEditing(enabled) }} onChange={setProfileDraft}/>}<div className="mt-3 flex flex-wrap gap-2">{profileEditing ? <button type="button" disabled={operation !== null || Boolean(profileError)} className="min-h-10 rounded-xl bg-forest px-4 text-sm font-bold text-white disabled:opacity-50" onClick={() => offer && void evaluate(offer)}>Update my finances</button> : <button type="button" className="min-h-10 rounded-xl border border-forest px-4 text-sm font-bold text-forest" onClick={() => setProfileEditing(true)}>Edit finances</button>}{profileError && <span role="alert" className="self-center text-sm text-red-800">{profileError}</span>}</div></>}</section><details className="surface p-5"><summary className="cursor-pointer font-display text-2xl">What if things don't go according to plan?</summary><p className="mt-2 text-sm text-muted">Explore how unexpected costs or changes in your living situation could affect your budget.</p>{!profileEnabled && <p className="mt-2 text-xs text-muted">Stress scenarios can run without a personal profile; add finances above for personalized savings impact.</p>}{!profileChanged && <RentalStressPanel key={offer.rental_label} offer={offer} busy={operation === 'stress'} error={stressError} result={stressResult} onRun={scenario => void runStress(scenario)}/>}</details></>}{offer && !evaluation && <button type="button" className="min-h-11 rounded-xl bg-forest px-5 text-sm font-bold text-white" onClick={() => void evaluate(offer)}>Evaluate confirmed offer</button>}</div>}
       <p className="text-xs leading-relaxed text-muted">Gemini extraction can be inaccurate. Missing fees stay unknown. Stress tests are hypothetical; lease interpretation is not legal advice.</p>
     </div>
     <div hidden={view !== 'compare'}><RentalComparison a={demoCompare ? demoOffers[0] : rentalA} b={demoCompare ? demoOffers[1] : rentalB} profile={profile} profileError={profileError} onEdit={edit} onDemo={() => void demo(true)}/></div>

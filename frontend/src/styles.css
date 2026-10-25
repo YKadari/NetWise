@@ -5,6 +5,7 @@
 @layer base {
   body { @apply bg-canvas font-sans antialiased; }
   button, input { font: inherit; }
+  .lease-review :is(button, summary, input, select):focus-visible { outline: 2px solid #285548; outline-offset: 3px; }
 }
 @layer components {
   .panel { @apply rounded-2xl border border-line bg-white shadow-[0_8px_28px_rgba(23,44,43,0.04)]; }
