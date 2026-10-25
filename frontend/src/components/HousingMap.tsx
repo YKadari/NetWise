@@ -6,6 +6,7 @@ import type { Area, Bedroom, FeatureCollection, HousingProperties, StationProper
 import { dollars, rentFieldFor } from '../lib/preferences'
 
 interface Props {
+  active?: boolean
   areas: Area[]
   housing: FeatureCollection<HousingProperties>
   stations: FeatureCollection<StationProperties>
@@ -18,9 +19,14 @@ interface Props {
   onSelect: (id: string) => void
 }
 
-function MapFocus({ housing, selectedId, resetKey }: { housing: FeatureCollection<HousingProperties>; selectedId: string | null; resetKey: number }) {
+function MapFocus({ housing, selectedId, resetKey, active }: { housing: FeatureCollection<HousingProperties>; selectedId: string | null; resetKey: number; active: boolean }) {
   const map = useMap()
   const fitted = useRef(false)
+  useEffect(() => {
+    if (!active) return
+    const timer = window.setTimeout(() => map.invalidateSize(), 0)
+    return () => window.clearTimeout(timer)
+  }, [active, map])
   useEffect(() => {
     if (!fitted.current) {
       map.fitBounds(L.geoJSON(housing as GeoJsonObject).getBounds(), { padding: [24, 24] })
@@ -38,7 +44,7 @@ function MapFocus({ housing, selectedId, resetKey }: { housing: FeatureCollectio
   return null
 }
 
-export function HousingMap({ areas, housing, stations, eligibleIds, selectedId, comparedIds, resetKey, bedrooms, showStations, onSelect }: Props) {
+export function HousingMap({ areas, housing, stations, eligibleIds, selectedId, comparedIds, resetKey, bedrooms, showStations, onSelect, active = true }: Props) {
   const areaById = useMemo(() => new Map(areas.map(a => [a.area_id, a])), [areas])
   const selectedFeature = housing.features.find(f => f.properties.area_id === selectedId)
   const workplace = areas[0]
@@ -65,7 +71,7 @@ export function HousingMap({ areas, housing, stations, eligibleIds, selectedId, 
         return <CircleMarker key={station.properties.station_id} center={[coords[1], coords[0]]} radius={4} pathOptions={{ color: '#ffffff', weight: 1.5, fillColor: '#356a85', fillOpacity: 0.95 }}><Tooltip>{station.properties.station_name}</Tooltip></CircleMarker>
       })}
       {workplace && <CircleMarker center={[workplace.workplace_latitude, workplace.workplace_longitude]} radius={8} pathOptions={{ color: '#ffffff', weight: 2, fillColor: '#d48657', fillOpacity: 1 }}><Tooltip permanent direction="top" offset={[0, -5]}>Chicago Loop</Tooltip></CircleMarker>}
-      <MapFocus housing={housing} selectedId={selectedId} resetKey={resetKey}/>
+      <MapFocus housing={housing} selectedId={selectedId} resetKey={resetKey} active={active}/>
     </MapContainer>
     <div className="pointer-events-none absolute bottom-7 left-3 z-[400] rounded-xl border border-line bg-white/95 px-3 py-2.5 text-sm text-ink shadow-sm"><div className="font-bold">Map key</div><div className="mt-1.5 flex items-center gap-2"><span className="h-3 w-3 rounded-sm bg-[#6ba995]"/>Meets requirements</div><div className="mt-1 flex items-center gap-2"><span className="h-3 w-3 rounded-sm bg-[#c8d2ca]"/>Outside requirements</div><div className="mt-1 flex items-center gap-2"><span className="h-3 w-3 rounded-sm bg-[#e4bb77]"/>Selected area</div><div className="mt-1 flex items-center gap-2"><span className="h-3 w-3 rounded-sm border-2 border-dashed border-[#536c8b]"/>In comparison</div></div>
   </div>

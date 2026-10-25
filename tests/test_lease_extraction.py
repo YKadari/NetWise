@@ -202,6 +202,63 @@ def test_provider_submission_rate_guard_is_bounded():
     assert error.value.status_code == 429
 
 
+def test_provider_uses_compatible_raw_schema_and_validates_with_pydantic(monkeypatch):
+    import backend.app.lease_extraction.provider as provider
+    from google import genai
+
+    monkeypatch.setattr(provider, "get_api_key", lambda: "synthetic-test-key")
+    monkeypatch.setattr(provider, "get_model", lambda: "synthetic-test-model")
+    result = {"terms": [{"field_id": "rental_label", "value": "Synthetic lease", "source_excerpt": "Synthetic lease", "status": "explicit"}], "general_warnings": []}
+    captured = {}
+
+    class FakeModels:
+        def generate_content(self, **kwargs):
+            captured.update(kwargs)
+            return type("Response", (), {"text": json.dumps(result)})()
+
+    class FakeClient:
+        def __init__(self, **_kwargs):
+            self.models = FakeModels()
+
+    monkeypatch.setattr(genai, "Client", FakeClient)
+    extraction = provider.extract_with_gemini("Synthetic lease")
+    config = captured["config"]
+    assert extraction.terms[0].field_id == "rental_label"
+    assert config.response_schema is None
+    assert config.response_json_schema == provider._gemini_response_schema()
+    candidate_schema = config.response_json_schema["properties"]["terms"]["items"]
+    assert "object" in candidate_schema["properties"]["value"]["type"]
+    assert "array" in candidate_schema["properties"]["value"]["type"]
+    assert candidate_schema["additionalProperties"] is False
+    assert "maxItems" not in config.response_json_schema["properties"]["terms"]
+
+
+def test_local_gemini_diagnostics_include_stage_without_exception_text(monkeypatch, caplog):
+    from google import genai
+    import backend.app.lease_extraction.provider as provider
+
+    monkeypatch.setenv("NESTWISE_GEMINI_DIAGNOSTICS", "1")
+    monkeypatch.setattr(provider, "get_api_key", lambda: "synthetic-test-key")
+    monkeypatch.setattr(provider, "get_model", lambda: "synthetic-test-model")
+
+    class FakeModels:
+        def generate_content(self, **_kwargs):
+            raise ValueError("private synthetic lease and api-key=do-not-log")
+
+    class FakeClient:
+        def __init__(self, **_kwargs):
+            self.models = FakeModels()
+
+    monkeypatch.setattr(genai, "Client", FakeClient)
+    with caplog.at_level("WARNING", logger="backend.app.lease_extraction.provider"):
+        with pytest.raises(provider.GeminiProviderError):
+            provider.extract_with_gemini("private synthetic lease")
+    assert "stage=gemini_api_call" in caplog.text
+    assert "category=sdk_request_construction" in caplog.text
+    assert "private synthetic lease" not in caplog.text
+    assert "do-not-log" not in caplog.text
+
+
 def test_pdf_upload_uses_original_bytes_and_rejects_unsupported_media(monkeypatch):
     from pypdf import PdfWriter
     import backend.app.api.lease_routes as routes

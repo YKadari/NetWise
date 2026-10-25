@@ -80,3 +80,22 @@ Run the hypothetical synthetic examples with `.\.venv\Scripts\python.exe -m scri
 # Batch 4B lease extraction
 
 The backend now exposes an optional Gemini-powered lease extraction and human confirmation workflow. Configure `GEMINI_API_KEY` in the ignored repository-root `.env` (never commit it); `GEMINI_MODEL` optionally selects another supported model. The default is `gemini-3.5-flash-lite`. Extraction accepts pasted text or a bounded PDF upload, returns candidate terms with evidence and uncertainty, and requires field-by-field user review before a `RentalOffer` can be evaluated. The service does not persist leases and sends submitted content to Google Gemini; use synthetic documents for demos. See [Batch 4B implementation notes](docs/BATCH_4B_REPORT.md) for endpoints, privacy, limits, and verification status.
+
+Batch 5A adds deterministic rental stress testing for utility increases, roommate contribution loss, and early departure at `POST /api/rental/stress-test` (with optional independent `/batch` scenarios). It reuses the Batch 4A financial evaluator and keeps unknown obligations unresolved. Scenarios are hypothetical, not forecasts or legal advice. See [Batch 5A implementation notes](docs/BATCH_5A_REPORT.md) for accounting rules, examples, and verification status.
+
+## Batch 5B: rental decision frontend
+
+The React app now connects the Chicago **Explore** experience with **Analyze** for manual rental evaluation or lease extraction and human review, and **Compare** for two saved rental offers. Analysis uses the existing Batch 4A evaluate/compare endpoints and Batch 5A stress endpoint. A synthetic demo works without Gemini; submitted lease text or PDFs go through the backend to Gemini when configured. Offers and financial profiles stay in page memory and clear when refreshed. See [the Batch 5B report](docs/BATCH_5B_REPORT.md) for the workflow and limits, and [the Batch 5B.1 Gemini repair report](docs/BATCH_5B_GEMINI_REPAIR.md) for the verified live extraction fix.
+
+Run FastAPI on port 8001 from the repository root, then start Vite in another PowerShell terminal from `frontend/`:
+
+```powershell
+# Repository root, terminal 1
+.\.venv\Scripts\python.exe -m uvicorn backend.app.main:app --host 127.0.0.1 --port 8001 --reload
+
+# frontend/, terminal 2
+npm ci
+npm run dev
+```
+
+Open `http://127.0.0.1:5173/`. The Vite `/api` proxy defaults to port 8001; set `$env:NESTWISE_API_PROXY_TARGET = 'http://127.0.0.1:8000'` in the frontend terminal if the backend runs on port 8000 instead. Run `npm run typecheck`, `npm test`, and `npm run build` from `frontend/`.
