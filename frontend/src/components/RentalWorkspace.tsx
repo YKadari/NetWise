@@ -10,6 +10,9 @@ import { FinancialProfileForm } from './FinancialProfileForm'
 import { RentalResults } from './RentalResults'
 import { RentalStressPanel } from './RentalStressPanel'
 import { RentalComparison } from './RentalComparison'
+import { ApiError } from '../lib/api'
+import { getFreshFirebaseIdToken, publicFirebaseConfigMatchesBackend } from '../lib/firebaseAuth'
+import { useFirebaseGoogleAuth } from '../hooks/useFirebaseGoogleAuth'
 
 interface Props { view: ProductView; onNavigate: (view: ProductView) => void }
 type Entry = 'manual' | 'lease' | null
@@ -18,11 +21,13 @@ type Operation = 'extract' | 'confirm' | 'evaluate' | 'stress' | 'demo' | null
 const cameFromDocument = (candidate: RentalOffer | null) => Boolean(candidate && 'base_rent_provenance' in candidate)
 
 export function RentalWorkspace({ view, onNavigate }: Props) {
+  const googleAuth = useFirebaseGoogleAuth()
   const [entry, setEntry] = useState<Entry>(null)
   const [leaseMethod, setLeaseMethod] = useState<'text' | 'pdf'>('text')
   const [step, setStep] = useState<Step>('start')
   const [status, setStatus] = useState<LeaseServiceStatus | null>(null)
   const [statusError, setStatusError] = useState<string | null>(null)
+  const [leaseAuthMessage, setLeaseAuthMessage] = useState<string | null>(null)
   const [draft, setDraft] = useState<LeaseDraft | null>(null)
   const [seed, setSeed] = useState<RentalOffer | null>(null)
   const [seedVersion, setSeedVersion] = useState(0)
@@ -46,6 +51,8 @@ export function RentalWorkspace({ view, onNavigate }: Props) {
     leaseServiceStatus().then(setStatus).catch(cause => setStatusError(cause instanceof Error ? cause.message : 'Could not check Gemini availability.'))
   }, [])
 
+  useEffect(() => { if (googleAuth.user) setLeaseAuthMessage(null) }, [googleAuth.user])
+
   let profile: FinancialProfile | undefined
   let profileError: string | null = null
   if (profileEnabled) {
@@ -68,15 +75,31 @@ export function RentalWorkspace({ view, onNavigate }: Props) {
   const extractText = async (text: string) => {
     if (operation) return
     setOperation('extract'); setError(null)
-    try { setDraft(await extractLeaseText(text)); setStep('review'); setEntryNotice(null) }
-    catch (cause) { setError(cause instanceof Error ? cause.message : 'Extraction failed.') }
+    try {
+      const idToken = status?.authentication_required ? (googleAuth.user ? await getFreshFirebaseIdToken(googleAuth.user) : null) : undefined
+      if (idToken === null) { setLeaseAuthMessage('Sign in with Google before extracting. Your lease text is still here.'); return }
+      setDraft(await extractLeaseText(text, idToken)); setStep('review'); setEntryNotice(null); setLeaseAuthMessage(null)
+    } catch (cause) {
+      if (cause instanceof ApiError && cause.status === 401 && status?.authentication_required) {
+        setLeaseAuthMessage('Your Google sign-in expired. Sign in again to continue; your lease text is still here.')
+        void googleAuth.signOut()
+      } else setError(cause instanceof Error ? cause.message : 'Extraction failed.')
+    }
     finally { setOperation(null) }
   }
   const extractPdf = async (file: File) => {
     if (operation) return
     setOperation('extract'); setError(null)
-    try { setDraft(await extractLeasePdf(file)); setStep('review'); setEntryNotice(null) }
-    catch (cause) { setError(cause instanceof Error ? cause.message : 'PDF extraction failed.') }
+    try {
+      const idToken = status?.authentication_required ? (googleAuth.user ? await getFreshFirebaseIdToken(googleAuth.user) : null) : undefined
+      if (idToken === null) { setLeaseAuthMessage('Sign in with Google before extracting. Your selected PDF is still here.'); return }
+      setDraft(await extractLeasePdf(file, idToken)); setStep('review'); setEntryNotice(null); setLeaseAuthMessage(null)
+    } catch (cause) {
+      if (cause instanceof ApiError && cause.status === 401 && status?.authentication_required) {
+        setLeaseAuthMessage('Your Google sign-in expired. Sign in again to continue; your selected PDF is still here.')
+        void googleAuth.signOut()
+      } else setError(cause instanceof Error ? cause.message : 'PDF extraction failed.')
+    }
     finally { setOperation(null) }
   }
   const confirm = async (decisions: ReviewDecision[]) => {
@@ -144,7 +167,7 @@ export function RentalWorkspace({ view, onNavigate }: Props) {
       {step !== 'start' && <><div className="flex flex-wrap items-center justify-between gap-3"><div><div className="kicker">Analyze · {step === 'review' ? 'Review findings' : step === 'results' ? 'Your result' : 'Rental details'}</div><p className="mt-1 text-sm text-muted">{step === 'review' ? 'Review every extracted term before calculating.' : step === 'results' ? 'Your calculation is ready. Edit terms or explore what-if scenarios.' : entry === 'lease' ? 'Upload a lease or paste its text for review.' : 'Start with the details you know; unknown costs stay marked unknown.'}</p></div><button type="button" className="min-h-10 rounded-xl border border-line px-4 text-sm font-bold" onClick={() => { if (step === 'review') { setStep('entry'); setError(null) } else setStep('start') }}>{step === 'review' ? '← Back to document' : '← All starting options'}</button></div><ol aria-label="Analyze progress" className="grid gap-2 sm:flex">{progressLabels.map((label,index) => <li key={label} aria-current={progressIndex === index ? 'step' : undefined} className={`flex-1 rounded-xl border px-3 py-2 text-xs font-bold ${progressIndex === index ? 'border-forest bg-forest text-white' : index < progressIndex ? 'border-[#b5d5c4] bg-mint text-forest' : 'border-line bg-white text-muted'}`}><span className="mr-2" aria-hidden="true">{index < progressIndex ? '✓' : index + 1}</span>{label}</li>)}</ol></>}
       {entry !== null && (step === 'start' || step === 'entry' || step === 'review') && <section hidden={step !== 'entry'} className="surface p-5 md:p-7"><h2 className="font-display text-2xl">{entry === 'lease' ? 'Analyze a lease with AI' : 'Enter rental details'}</h2>{entry === 'lease' && <p className="mt-2 text-sm text-muted">Gemini looks for rent, fees, deposits, lease length, concessions, and conditions. AI can make mistakes; you review every finding before calculations. Your submitted lease text is sent to Google Gemini.</p>}<div className="mt-4 flex flex-wrap gap-x-4 gap-y-2 text-sm">{entry === 'lease' ? <button type="button" className="font-semibold text-forest underline" onClick={startManual}>Switch to manual entry</button> : <button type="button" className="font-semibold text-forest underline" onClick={startLease}>Analyze a lease instead</button>}</div>
         {entryNotice && <p className="mt-4 rounded-xl border border-amber-200 bg-amber-50 p-3 text-sm text-amber-950">{entryNotice}</p>}
-        <div className="mt-6">{entry === 'manual' && <RentalInput key={seedVersion} seed={seed} busy={operation !== null} onEvaluate={next => void evaluate(next)}/ >}{entry === 'lease' && <LeaseInput key={leaseMethod} initialMethod={leaseMethod} status={status} busy={operation === 'extract'} error={error} onText={text => void extractText(text)} onPdf={file => void extractPdf(file)}/>}</div>{entry === 'manual' && error && <p role="alert" className="mt-3 text-sm text-red-800">{error}</p>}
+        <div className="mt-6">{entry === 'manual' && <RentalInput key={seedVersion} seed={seed} busy={operation !== null} onEvaluate={next => void evaluate(next)}/ >}{entry === 'lease' && <LeaseInput key={leaseMethod} initialMethod={leaseMethod} status={status} busy={operation === 'extract'} error={error} authConfigured={googleAuth.configured && publicFirebaseConfigMatchesBackend(status?.firebase_project_id ?? undefined)} authLoading={googleAuth.loading} authBusy={googleAuth.busy} authUser={Boolean(googleAuth.user)} authError={leaseAuthMessage || googleAuth.error} onSignIn={() => { setLeaseAuthMessage(null); void googleAuth.signIn() }} onSignOut={() => void googleAuth.signOut()} onText={text => void extractText(text)} onPdf={file => void extractPdf(file)}/>}</div>{entry === 'manual' && error && <p role="alert" className="mt-3 text-sm text-red-800">{error}</p>}
       </section>}
       {step === 'review' && draft && <section className="surface p-5 md:p-7"><p className="mb-4 text-xs text-muted">Source: {draft.source_type === 'pdf' ? 'PDF' : 'pasted text'}. No terms are confirmed until you review and continue.</p><LeaseReview key={draft.draft_id} draft={draft} busy={operation === 'confirm'} error={error} onConfirm={decisions => void confirm(decisions)} onBack={() => { setStep('entry'); setError(null) }}/></section>}
       {step === 'results' && <div className="space-y-5">{profileChanged && <div className="rounded-xl border border-amber-200 bg-amber-50 p-4 text-sm text-amber-950">Your financial profile changed. The figures below may be out of date. <button type="button" className="ml-2 font-bold underline" onClick={() => { if (offer) void evaluate(offer) }}>Refresh financial results</button></div>}{error && <p role="alert" className="text-sm text-red-800">{error} {offer && <button type="button" className="font-bold underline" onClick={() => void evaluate(offer)}>Retry evaluation</button>}</p>}{offer && evaluation && <><RentalResults offer={offer} result={evaluation} onSave={save} savedSlot={savedSlot} onEdit={editCurrent} onNew={() => { setStep('start'); setEntry(null); setSeed(null); setSeedVersion(n => n + 1); setProfileEnabled(false); setProfileEditing(false); setProfileDraft(blankProfile()); setError(null) }} onCompare={() => { setDemoCompare(false); onNavigate('compare') }} onCompareDemo={() => { setDemoCompare(true); onNavigate('compare') }} isDemo={offer.rental_label === demoOffers[0].rental_label} profileStale={profileChanged} hasSavedA={rentalA !== null} hasSavedB={rentalB !== null} reviewedDocument={cameFromDocument(offer)}/> <section className="surface p-5" aria-label="Personal budget analysis"><div className="kicker">Optional · personal budget</div><h2 className="mt-1 font-display text-2xl">Can I comfortably afford this rental?</h2><p className="mt-2 text-sm text-muted">Add your take-home pay, expenses, and savings to see how this rental fits your budget.</p>{!profileEnabled && <button type="button" className="mt-4 min-h-11 rounded-xl bg-forest px-5 text-sm font-bold text-white" onClick={() => { setProfileEnabled(true); setProfileEditing(true) }}>Add my finances</button>}{profileEnabled && <><p className="mt-3 text-sm text-forest">{profileChanged ? 'Update the profile and refresh to recalculate affordability.' : evaluation.financial_profile ? `${evaluation.monthly_costs.monthly_costs_complete ? 'Monthly' : 'Known-term monthly'} cash left: ${money(evaluation.financial_profile.known_monthly_cash_remaining_after_housing_and_savings)} under this profile.${evaluation.monthly_costs.monthly_costs_complete ? '' : ' Unconfirmed housing costs are excluded.'}` : 'Complete your profile to calculate personalized cash flow.'}</p>{profileEditing && <FinancialProfileForm enabled value={profileDraft} onEnabled={enabled => { setProfileEnabled(enabled); setProfileEditing(enabled) }} onChange={setProfileDraft}/>}<div className="mt-3 flex flex-wrap gap-2">{profileEditing ? <button type="button" disabled={operation !== null || Boolean(profileError)} className="min-h-10 rounded-xl bg-forest px-4 text-sm font-bold text-white disabled:opacity-50" onClick={() => offer && void evaluate(offer)}>Update my finances</button> : <button type="button" className="min-h-10 rounded-xl border border-forest px-4 text-sm font-bold text-forest" onClick={() => setProfileEditing(true)}>Edit finances</button>}{profileError && <span role="alert" className="self-center text-sm text-red-800">{profileError}</span>}</div></>}</section><details className="surface p-5"><summary className="cursor-pointer font-display text-2xl">What if things don't go according to plan?</summary><p className="mt-2 text-sm text-muted">Explore how unexpected costs or changes in your living situation could affect your budget.</p>{!profileEnabled && <p className="mt-2 text-xs text-muted">Stress scenarios can run without a personal profile; add finances above for personalized savings impact.</p>}{!profileChanged && <RentalStressPanel key={offer.rental_label} offer={offer} busy={operation === 'stress'} error={stressError} result={stressResult} onRun={scenario => void runStress(scenario)}/>}</details></>}{offer && !evaluation && <button type="button" className="min-h-11 rounded-xl bg-forest px-5 text-sm font-bold text-white" onClick={() => void evaluate(offer)}>Evaluate confirmed offer</button>}</div>}

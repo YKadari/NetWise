@@ -106,15 +106,15 @@ Batch 6A makes Analyze start with three options: AI lease review, manual rental 
 
 Batch 6C simplifies AI lease review into essential details, move-in costs, monthly costs, and terms worth checking. Renters can correct important values, inspect source evidence on demand, and confirm the displayed summary once; all original draft terms still receive a backend decision, with unclear or unshown optional terms left unknown by default. See [the Batch 6C report](docs/BATCH_6C_REPORT.md) for safeguards and verification results.
 
-Batch 6B polishes the Analyze entry and comparison actions, keeps new manual rentals blank, and makes incomplete cost terms visible as known subtotals. Batch 7A prepares a single Docker-based Render Web Service with FastAPI serving the built frontend; it keeps public Gemini extraction disabled by default in production. See the [Batch 6B QA report](docs/BATCH_6B_REPORT.md) and [Batch 7A deployment guide](docs/BATCH_7A_RENDER_DEPLOYMENT.md).
+Batch 6B polishes the Analyze entry and comparison actions, keeps new manual rentals blank, and makes incomplete cost terms visible as known subtotals. Batch 7A prepares a single Docker-based Render Web Service with FastAPI serving the built frontend; it keeps public Gemini extraction disabled by default in production. Batch 7C adds Firebase Google Sign-In and Firestore-backed per-user/global request limits for Gemini extraction. See the [Batch 6B QA report](docs/BATCH_6B_REPORT.md), [Batch 7A deployment guide](docs/BATCH_7A_RENDER_DEPLOYMENT.md), and [Batch 7C Firebase/Gemini guide](docs/BATCH_7C_FIREBASE_GEMINI.md).
 
 ## Production preview on Render
 
-The root `render.yaml` defines one Docker Web Service, uses `/api/health`, and disables automatic deployment. Review the settings and choose the repository branch in Render before creating the service. Keep `NESTWISE_ENABLE_PUBLIC_GEMINI=false`; do not add a Gemini key until shared abuse controls and provider spend limits are implemented. No frontend key is required. To build and run the same image locally:
+The root `render.yaml` defines one Docker Web Service, uses `/api/health`, and disables automatic deployment. Review the settings and choose the repository branch in Render before creating the service. Keep `NESTWISE_ENABLE_PUBLIC_GEMINI=false` until the owner has configured Firebase Authentication, Firestore, service credentials, model quota limits, and completed the documented smoke checks. The new controls bound requests but do not guarantee a hard provider spend ceiling. To build and run the same image locally:
 
 ```powershell
 docker build -t nestwise:batch-7a .
 docker run --rm -p 10000:10000 -e NESTWISE_ENV=production -e NESTWISE_ENABLE_PUBLIC_GEMINI=false -e NESTWISE_GEMINI_DIAGNOSTICS=0 nestwise:batch-7a
 ```
 
-Open `http://127.0.0.1:10000/`. Full Render dashboard setup, environment variables, security limits, smoke checks, and rollback steps are in [the Batch 7A deployment guide](docs/BATCH_7A_RENDER_DEPLOYMENT.md). This repository preparation does not create or deploy a Render service.
+Open `http://127.0.0.1:10000/`. Full Render dashboard setup, environment variables, security limits, smoke checks, and rollback steps are in [the Batch 7A deployment guide](docs/BATCH_7A_RENDER_DEPLOYMENT.md). Firebase project setup, safe secret configuration, quota behavior, and the explicit Gemini enablement checklist are in [the Batch 7C guide](docs/BATCH_7C_FIREBASE_GEMINI.md). This repository preparation does not create or deploy a Render service.

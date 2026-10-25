@@ -26,9 +26,11 @@ It has no reload mode, listens on Render’s supplied port, and starts independe
 
 ## Environment variables and Gemini protection
 
+This section records the Batch 7A state. Batch 7C later added Firebase Google authentication and Firestore-backed per-user/global request limits; see [the Batch 7C Firebase/Gemini guide](BATCH_7C_FIREBASE_GEMINI.md) for current extraction behavior and owner setup requirements. The Render feature flag remains disabled by default.
+
 The image sets `NESTWISE_ENV=production` and `NESTWISE_GEMINI_DIAGNOSTICS=0`; Render config explicitly sets `NESTWISE_ENABLE_PUBLIC_GEMINI=false`. In production, Gemini extraction is disabled unless that flag is explicitly true. With it disabled, `/api/lease/status` reports not ready and text/PDF extraction return a sanitized 503; manual rental entry, evaluation, comparisons, stress analysis, and Explore remain independent. Local behavior remains unchanged: absent a flag, extraction can be used when locally configured. Production does not load a `.env` file. `.env.example` contains placeholders only.
 
-Do not enable public Gemini solely by toggling the feature flag. The current five-per-minute limiter is process-local, is not shared across instances, and is not authentication or sufficient public abuse protection. Keep the endpoint disabled until shared request limits, access/abuse controls, and provider spend/quota limits are in place. Gemini key absence does not prevent startup. If later enabled, add `GEMINI_API_KEY` as a Render secret environment variable and optionally set `GEMINI_MODEL` to the already-supported model. Never add either value to `render.yaml`, Vite variables, or source control. This preparation does not enable billing or change provider quotas.
+Do not enable public Gemini solely by toggling the feature flag. In the original Batch 7A implementation, the five-per-minute limiter was process-local and there was no authentication or shared daily quota. Batch 7C adds Firebase verification and Firestore-backed quotas, but the owner must still configure and review these controls, verify the actual provider quota, and complete the documented smoke checks before enabling extraction. Gemini key absence does not prevent startup. If later enabled, add `GEMINI_API_KEY` as a Render secret environment variable and optionally set `GEMINI_MODEL` to the already-supported model. Never add either value to `render.yaml`, Vite variables, or source control. This preparation does not enable billing or change provider quotas.
 
 Other deployment environment:
 
@@ -42,7 +44,7 @@ Other deployment environment:
 | `GEMINI_MODEL` | Optional; default remains the current provider model |
 | `NESTWISE_CORS_ORIGINS` | Omit for same-origin deployment; production default is empty |
 
-The existing process-local extraction limiter and ephemeral upload handling are unchanged. No lease persistence, account system, or shared abuse controls are introduced. The endpoint also has no authentication. A public preview needs additional protection before extraction is enabled.
+The existing process-local extraction limiter and ephemeral upload handling are unchanged. Batch 7A did not add an account system or shared abuse controls; Batch 7C adds Google sign-in and shared quotas. This remains deployment preparation, not a security certification. A public preview requires owner configuration and verification of the Batch 7C controls before extraction is enabled.
 
 ## Render configuration and manual setup
 

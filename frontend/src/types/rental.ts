@@ -79,7 +79,7 @@ export interface CandidateTerm { field_id: LeaseFieldId; value: unknown; source_
 export interface LeaseDraft { draft_id: string; terms: CandidateTerm[]; general_warnings: string[]; review_required: true; source_type: 'pasted_text' | 'pdf' }
 export interface ReviewDecision { field_id: LeaseFieldId; action: 'accept' | 'correct' | 'mark_unknown' | 'confirm_none'; value?: unknown }
 export interface LeaseConfirmation { confirmed_offer: RentalOffer; review_history: unknown[]; confirmed_clauses: Record<string, unknown> }
-export interface LeaseServiceStatus { configured: boolean; model: string; service_ready: boolean }
+export interface LeaseServiceStatus { configured: boolean; model: string; service_ready: boolean; authentication_required?: boolean; firebase_project_id?: string | null }
 
 export type StressScenario =
   | { type: 'utility_increase'; additional_monthly_amount: number; first_affected_month: number; last_affected_month: number }

@@ -12,6 +12,23 @@ from backend.app.lease_extraction.workflow import confirm_draft, make_draft, ver
 from backend.app.main import app
 
 
+@pytest.fixture(autouse=True)
+def mock_auth_and_quota_for_legacy_extraction_tests(monkeypatch):
+    """Keep provider/workflow tests deterministic; auth and Firestore are tested separately."""
+    import backend.app.api.lease_routes as routes
+    monkeypatch.setenv("NESTWISE_ENV", "test")
+    monkeypatch.setenv("NESTWISE_ENABLE_PUBLIC_GEMINI", "true")
+    monkeypatch.setenv("GEMINI_API_KEY", "synthetic-server-key")
+    monkeypatch.setenv("FIREBASE_PROJECT_ID", "nestwise-test-project")
+    monkeypatch.setenv("FIREBASE_SERVICE_ACCOUNT_JSON", json.dumps({"project_id": "nestwise-test-project", "private_key": "synthetic"}))
+    monkeypatch.setenv("NESTWISE_GEMINI_USER_DAILY_LIMIT", "3")
+    monkeypatch.setenv("NESTWISE_GEMINI_GLOBAL_DAILY_LIMIT", "60")
+    monkeypatch.setenv("NESTWISE_GEMINI_MAX_CONCURRENT", "2")
+    monkeypatch.setattr(routes, "_authenticated_uid", lambda _request: "synthetic-user")
+    monkeypatch.setattr(routes, "_reserve_user_quota", lambda _uid: object())
+    monkeypatch.setattr(routes, "_release_quota", lambda _reservation: None)
+
+
 def candidate(field_id, value, excerpt="The monthly rent is $1,500.", status="explicit"):
     return CandidateTerm(field_id=field_id, value=value, source_excerpt=excerpt if status == "explicit" else None, status=status)
 

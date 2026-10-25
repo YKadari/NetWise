@@ -4,6 +4,7 @@ import type { FinancialProfile, LeaseConfirmation, LeaseDraft, LeaseServiceStatu
 const messages: Record<number, string> = {
   413: 'The PDF exceeds the 10 MB limit. Choose a smaller file.',
   415: 'This file is not a supported PDF.',
+  401: 'Your Google sign-in has expired or is invalid. Sign in again to continue.',
   429: 'Gemini is at its request limit. Wait a minute and try again.',
   502: 'The document service could not process this request. You can retry or enter terms manually.',
   503: 'Gemini extraction is unavailable. Manual entry still works.',
@@ -22,7 +23,11 @@ async function rentalRequest<T>(path: string, options: RequestInit = {}): Promis
       else if (Array.isArray(payload.detail)) detail = payload.detail.slice(0, 3).map(item => `${item.location?.join('.') || 'Request'}: ${item.message || 'invalid value'}`).join('; ')
     } catch { /* A proxy may return a non-JSON error page. */ }
     const safeDetail = response.status === 422 ? 'Some reviewed terms could not be added to the rental. Check the values and try again.' : detail
-    throw new ApiError(messages[response.status] || safeDetail || `Request failed (${response.status}).`, response.status)
+    const isLeaseExtraction = path === '/lease/extract-text' || path === '/lease/extract-pdf'
+    const message = response.status === 429 && isLeaseExtraction && detail
+      ? detail
+      : messages[response.status] || safeDetail || `Request failed (${response.status}).`
+    throw new ApiError(message, response.status)
   }
   try { return await response.json() as T }
   catch { throw new ApiError('The server returned an unreadable response.') }
@@ -41,14 +46,18 @@ function checkDraft(result: LeaseDraft): LeaseDraft {
   return result
 }
 
-export async function extractLeaseText(text: string): Promise<LeaseDraft> {
-  return checkDraft(await rentalRequest<LeaseDraft>('/lease/extract-text', json({ text })))
+const bearerHeaders = (idToken: string): Record<string, string> => ({ Authorization: `Bearer ${idToken}` })
+
+export async function extractLeaseText(text: string, idToken?: string): Promise<LeaseDraft> {
+  const options = json({ text })
+  if (idToken) options.headers = { ...(options.headers as Record<string, string>), ...bearerHeaders(idToken) }
+  return checkDraft(await rentalRequest<LeaseDraft>('/lease/extract-text', options))
 }
 
-export async function extractLeasePdf(file: File): Promise<LeaseDraft> {
+export async function extractLeasePdf(file: File, idToken?: string): Promise<LeaseDraft> {
   const body = new FormData()
   body.append('file', file)
-  return checkDraft(await rentalRequest<LeaseDraft>('/lease/extract-pdf', { method: 'POST', body }))
+  return checkDraft(await rentalRequest<LeaseDraft>('/lease/extract-pdf', { method: 'POST', body, headers: idToken ? bearerHeaders(idToken) : undefined }))
 }
 
 export async function confirmLease(draft: LeaseDraft, decisions: ReviewDecision[]): Promise<LeaseConfirmation> {

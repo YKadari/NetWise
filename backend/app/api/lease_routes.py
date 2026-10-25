@@ -9,7 +9,19 @@ import time
 from fastapi import APIRouter, File, HTTPException, Request, UploadFile
 
 from backend.app.lease_extraction.config import extraction_enabled, provider_status
+from backend.app.lease_extraction.firebase_auth import FirebaseUnavailable, InvalidFirebaseToken, verify_firebase_id_token
 from backend.app.lease_extraction.models import ConfirmRequest, LeaseTextRequest
+from backend.app.lease_extraction.quota import (
+    ConcurrentLimitReached,
+    GlobalDailyLimitReached,
+    QuotaLimits,
+    QuotaReservation,
+    QuotaUnavailable,
+    UserDailyLimitReached,
+    finish_reservation,
+    quota_limits_from_environment,
+    reserve_extraction,
+)
 from backend.app.lease_extraction.provider import extract_with_gemini
 from backend.app.lease_extraction.provider import GeminiConfigurationError, GeminiOutputError, GeminiQuotaError
 from backend.app.lease_extraction.workflow import confirm_draft, make_draft, verify_pdf_evidence, verify_text_evidence
@@ -47,6 +59,44 @@ def lease_status() -> dict[str, object]:
 def _require_extraction_enabled() -> None:
     if not extraction_enabled():
         raise HTTPException(status_code=503, detail="Live Gemini lease extraction is disabled on this service")
+    if not provider_status()["service_ready"]:
+        raise HTTPException(status_code=503, detail="Gemini authentication or quota service is not configured")
+
+
+def _authenticated_uid(request: Request) -> str:
+    header = request.headers.get("authorization", "")
+    scheme, separator, token = header.partition(" ")
+    if not separator or scheme.casefold() != "bearer" or not token or len(token) > 8192:
+        raise HTTPException(status_code=401, detail="Sign in with Google to use AI lease extraction")
+    try:
+        return verify_firebase_id_token(token)
+    except InvalidFirebaseToken:
+        raise HTTPException(status_code=401, detail="Your sign-in expired or is invalid. Sign in again.") from None
+    except FirebaseUnavailable:
+        raise HTTPException(status_code=503, detail="Sign-in verification is temporarily unavailable") from None
+
+
+def _reserve_user_quota(uid: str) -> QuotaReservation:
+    limits = quota_limits_from_environment()
+    if limits is None:
+        raise HTTPException(status_code=503, detail="AI usage limits are not configured")
+    try:
+        return reserve_extraction(uid, limits)
+    except UserDailyLimitReached as exc:
+        raise HTTPException(status_code=429, detail="Your daily AI extraction limit has been reached.", headers={"Retry-After": str(exc.retry_after)}) from None
+    except GlobalDailyLimitReached as exc:
+        raise HTTPException(status_code=429, detail="Today's shared AI extraction limit has been reached.", headers={"Retry-After": str(exc.retry_after)}) from None
+    except ConcurrentLimitReached:
+        raise HTTPException(status_code=429, detail="The AI demo is busy. Please try again shortly.", headers={"Retry-After": "30"}) from None
+    except QuotaUnavailable:
+        raise HTTPException(status_code=503, detail="AI usage service is temporarily unavailable") from None
+
+
+def _release_quota(reservation: QuotaReservation) -> None:
+    try:
+        finish_reservation(reservation)
+    except QuotaUnavailable:
+        raise HTTPException(status_code=503, detail="AI usage service is temporarily unavailable") from None
 
 
 def _provider_error(exc: Exception) -> HTTPException:
@@ -72,18 +122,24 @@ def _provider_error(exc: Exception) -> HTTPException:
 def extract_text(request: LeaseTextRequest, http_request: Request) -> dict[str, object]:
     _require_extraction_enabled()
     _limit_extraction_requests(http_request)
+    uid = _authenticated_uid(http_request)
+    reservation = _reserve_user_quota(uid)
     try:
-        extraction = extract_with_gemini(request.text)
-    except (RuntimeError, TimeoutError, ValueError) as exc:
-        raise _provider_error(exc) from None
-    extraction = verify_text_evidence(extraction, request.text)
-    return make_draft(extraction, "pasted_text").model_dump(mode="json")
+        try:
+            extraction = extract_with_gemini(request.text)
+        except (RuntimeError, TimeoutError, ValueError) as exc:
+            raise _provider_error(exc) from None
+        extraction = verify_text_evidence(extraction, request.text)
+        return make_draft(extraction, "pasted_text").model_dump(mode="json")
+    finally:
+        _release_quota(reservation)
 
 
 @router.post("/extract-pdf")
 async def extract_pdf(http_request: Request, file: UploadFile = File(...)) -> dict[str, object]:
     _require_extraction_enabled()
     _limit_extraction_requests(http_request)
+    uid = _authenticated_uid(http_request)
     if not file.filename or not file.filename.casefold().endswith(".pdf") or file.content_type != "application/pdf":
         raise HTTPException(status_code=415, detail="Upload a PDF file with application/pdf media type")
     chunks = []
@@ -113,12 +169,16 @@ async def extract_pdf(http_request: Request, file: UploadFile = File(...)) -> di
         raise HTTPException(status_code=503, detail="PDF validation dependency is unavailable") from None
     except Exception:
         raise HTTPException(status_code=422, detail="PDF is malformed, encrypted, or exceeds the 80-page limit") from None
+    reservation = _reserve_user_quota(uid)
     try:
-        extraction = extract_with_gemini(data, is_pdf=True)
-    except (RuntimeError, TimeoutError, ValueError) as exc:
-        raise _provider_error(exc) from None
-    extraction = verify_pdf_evidence(extraction, pages)
-    return make_draft(extraction, "pdf").model_dump(mode="json")
+        try:
+            extraction = extract_with_gemini(data, is_pdf=True)
+        except (RuntimeError, TimeoutError, ValueError) as exc:
+            raise _provider_error(exc) from None
+        extraction = verify_pdf_evidence(extraction, pages)
+        return make_draft(extraction, "pdf").model_dump(mode="json")
+    finally:
+        _release_quota(reservation)
 
 
 @router.post("/confirm")
